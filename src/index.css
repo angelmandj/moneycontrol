@@ -1,0 +1,29 @@
+:root {
+  --bg: #070b14;
+  --bg2: #0c1220;
+  --card: rgba(18, 26, 44, 0.72);
+  --line: rgba(148, 163, 184, 0.12);
+  --text: #e8eefc;
+  --muted: #8b9bb8;
+  --green: #3ee0a7;
+  --red: #ff6b8a;
+  --gold: #f5c46b;
+  --blue: #6ea8ff;
+  --violet: #a78bfa;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { min-height: 100%; }
+body {
+  font-family: 'Instrument Sans', system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(110, 168, 255, 0.18), transparent 50%),
+    radial-gradient(900px 500px at 100% 0%, rgba(167, 139, 250, 0.14), transparent 45%),
+    radial-gradient(800px 500px at 50% 120%, rgba(62, 224, 167, 0.08), transparent 40%),
+    var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font-family: inherit; }
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+::-webkit-scrollbar { width: 0; height: 0; }
