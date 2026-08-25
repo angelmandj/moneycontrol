@@ -15,6 +15,7 @@ const seed = (): Store => {
     budgets: { Comida: 40, Transporte: 15 },
     templates: [],
     theme: 'dark',
+    didReset: false,
     telegram: { token: '', chatId: '', lastUpdate: 0 },
     loans: [
       { id: 'l1', person: 'Carlos', amountUsd: 40, note: 'P2P puente', date: d(3), status: 'open' },
@@ -98,9 +99,9 @@ export async function hashPin(pin: string) {
   return 'h' + h.toString(16)
 }
 
-/** Vacía movimientos, préstamos y snapshots; conserva tasa, meta, presupuestos, plantillas, tema, PIN y Telegram */
+/** Vacía movimientos, préstamos y snapshots; conserva tasa, meta, presupuestos, plantillas, tema, PIN y Telegram. Marca didReset para ocultar el botón del Home */
 export function resetData(s: Store): Store {
-  return { ...s, txs: [], loans: [], snaps: [], debts: [] }
+  return { ...s, txs: [], loans: [], snaps: [], debts: [], didReset: true }
 }
 
 export function inPeriod(iso: string, period: string) {

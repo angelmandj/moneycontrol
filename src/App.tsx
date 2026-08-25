@@ -50,6 +50,8 @@ interface Confirm {
   title: string
   msg: string
   onYes: () => void
+  /** Acción opcional extra (ej. "Respaldar primero") */
+  extra?: { label: string; onClick: () => void }
 }
 
 export default function App() {
@@ -409,7 +411,8 @@ export default function App() {
   function startFromZero() {
     setConfirm({
       title: 'Empezar desde cero',
-      msg: 'Se borrarán todos los movimientos, préstamos, deudas y snapshots. Conservamos tu tasa, metas, presupuestos, gastos fijos, plantillas y configuración.',
+      msg: 'Se borrarán todos los movimientos, préstamos, deudas y snapshots. Conservamos tu tasa, metas, presupuestos, gastos fijos, plantillas y configuración. Este botón desaparecerá después de usarlo para evitar borrados accidentales; te recomendamos descargar un respaldo primero.',
+      extra: { label: '💾 Respaldar primero', onClick: exportBackup },
       onYes: () => {
         setS((p) => resetData(p))
         ping('Datos borrados · empiezas desde cero')
@@ -906,9 +909,11 @@ export default function App() {
             onDelTemplate={(id) => setS((p) => ({ ...p, templates: p.templates.filter((t) => t.id !== id) }))}
           />
 
-          <button style={dangerBtn} onClick={startFromZero}>
-            🗑 Borrar datos de ejemplo y empezar desde cero
-          </button>
+          {!s.didReset && (
+            <button style={dangerBtn} onClick={startFromZero}>
+              🗑 Borrar datos de ejemplo y empezar desde cero
+            </button>
+          )}
         </>
       )}
 
@@ -1363,6 +1368,14 @@ export default function App() {
       {confirm && (
         <Modal title={confirm.title} onClose={() => setConfirm(null)}>
           <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 16 }}>{confirm.msg}</p>
+          {confirm.extra && (
+            <button
+              style={{ ...btn, background: 'var(--chip)', color: 'inherit', width: '100%', marginBottom: 10 }}
+              onClick={() => confirm.extra!.onClick()}
+            >
+              {confirm.extra.label}
+            </button>
+          )}
           <div style={{ display: 'flex', gap: 10 }}>
             <button style={{ ...dangerBtn, marginTop: 0, flex: 1 }} onClick={() => { confirm.onYes(); setConfirm(null) }}>Confirmar</button>
             <button style={{ ...btn, background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', flex: 1 }} onClick={() => setConfirm(null)}>Cancelar</button>

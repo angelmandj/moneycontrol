@@ -98,4 +98,6 @@ export interface Store {
   theme: Theme
   /** Hash SHA-256 del PIN de bloqueo (vacío = sin bloqueo) */
   pinHash?: string
+  /** Ya usó "empezar desde cero": oculta el botón del Home para evitar borrados accidentales */
+  didReset?: boolean
 }
