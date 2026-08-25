@@ -54,6 +54,12 @@ interface Confirm {
   extra?: { label: string; onClick: () => void }
 }
 
+/** Evento de instalación PWA (Chrome/Android); no existe en iOS */
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
 export default function App() {
   const [s, setS] = useState<Store>(() => loadStore())
   const [tab, setTab] = useState<Tab>('home')
@@ -79,6 +85,10 @@ export default function App() {
   const [syncSt, setSyncSt] = useState<'off' | 'saving' | 'saved' | 'error'>('off')
   const [cloudAsk, setCloudAsk] = useState<{ remote: Store; updatedAt: string } | null>(null)
   const [email, setEmail] = useState('')
+  // --- PWA: instalación ---
+  const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null)
+  const [installed, setInstalled] = useState(false)
+  const [installHelp, setInstallHelp] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const sRef = useRef(s)
@@ -102,6 +112,32 @@ export default function App() {
       body: `${due.length} pago(s) por ${total.toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT: ${due.map((b) => b.name).join(', ')}`,
     })
   }, [s.recurring])
+
+  // PWA: capturar el prompt de instalación y detectar si ya corre instalada
+  useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone) setInstalled(true)
+    const onBip = (e: Event) => {
+      e.preventDefault()
+      setInstallEvt(e as BeforeInstallPromptEvent)
+    }
+    const onDone = () => {
+      setInstalled(true)
+      setInstallEvt(null)
+    }
+    window.addEventListener('beforeinstallprompt', onBip)
+    window.addEventListener('appinstalled', onDone)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBip)
+      window.removeEventListener('appinstalled', onDone)
+    }
+  }, [])
+
+  // PWA: atajos desde el ícono instalado (/?go=escanear | /?go=registrar)
+  useEffect(() => {
+    const go = new URLSearchParams(window.location.search).get('go')
+    if (go === 'escanear') setTab('scan')
+    else if (go === 'registrar') setTab('home')
+  }, [])
 
   // Sesión de Supabase: restaurar al cargar y reaccionar a login/logout
   useEffect(() => {
@@ -430,6 +466,20 @@ export default function App() {
     a.click()
     URL.revokeObjectURL(a.href)
     ping('Respaldo descargado')
+  }
+
+  /** Instala la PWA: usa el prompt nativo si Chrome lo ofreció; si no, muestra instrucciones (iOS/Safari) */
+  async function installApp() {
+    if (!installEvt) {
+      setInstallHelp(true)
+      return
+    }
+    await installEvt.prompt()
+    const { outcome } = await installEvt.userChoice
+    if (outcome === 'accepted') {
+      setInstallEvt(null)
+      ping('¡Instalándose! Búscala en tu pantalla de inicio 📲')
+    }
   }
 
   function importBackup(file: File) {
@@ -1056,6 +1106,17 @@ export default function App() {
             </button>
           ))}
 
+          {!installed && (
+            <button onClick={installApp} style={{ ...row, width: '100%', textAlign: 'left', cursor: 'pointer', color: 'var(--text)', border: '1px solid var(--line)' }}>
+              <div style={{ width: 46, height: 46, borderRadius: 16, background: 'rgba(110,168,255,.12)', display: 'grid', placeItems: 'center', fontSize: 20 }}>📲</div>
+              <div style={{ flex: 1 }}>
+                <b>Instalar como app</b>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>Ícono en tu pantalla de inicio · pantalla completa · funciona sin conexión</div>
+              </div>
+              <span style={{ color: 'var(--muted)' }}>›</span>
+            </button>
+          )}
+
           <Card title="Nube · Sincronización">
             {sbUser ? (
               <>
@@ -1380,6 +1441,27 @@ export default function App() {
             <button style={{ ...dangerBtn, marginTop: 0, flex: 1 }} onClick={() => { confirm.onYes(); setConfirm(null) }}>Confirmar</button>
             <button style={{ ...btn, background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', flex: 1 }} onClick={() => setConfirm(null)}>Cancelar</button>
           </div>
+        </Modal>
+      )}
+
+      {installHelp && (
+        <Modal title="📲 Instalar MoneyControl" onClose={() => setInstallHelp(false)}>
+          <div style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.7 }}>
+            <p>
+              <b style={{ color: 'var(--text)' }}>Android (Chrome):</b>
+              <br />
+              Menú ⋮ → <b style={{ color: 'var(--text)' }}>Instalar app</b> o <b style={{ color: 'var(--text)' }}>Añadir a pantalla de inicio</b>.
+            </p>
+            <p style={{ marginTop: 12 }}>
+              <b style={{ color: 'var(--text)' }}>iPhone (Safari):</b>
+              <br />
+              Botón <b style={{ color: 'var(--text)' }}>Compartir</b> → <b style={{ color: 'var(--text)' }}>Añadir a pantalla de inicio</b>.
+            </p>
+            <p style={{ marginTop: 12 }}>
+              Se abrirá a pantalla completa, con su propio ícono, y seguirá funcionando aunque no tengas conexión. Tus datos y la nube son los mismos.
+            </p>
+          </div>
+          <button style={{ ...btn, width: '100%', marginTop: 16 }} onClick={() => setInstallHelp(false)}>Entendido</button>
         </Modal>
       )}
 

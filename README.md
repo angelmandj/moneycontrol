@@ -22,9 +22,24 @@ npm run dev
 - Tendencia del neto **vs. mes anterior** (▲/▼ %) y recordatorio de cierre P2P.
 - **Respaldo JSON** (exportar/restaurar), **bloqueo con PIN** y **tema claro/oscuro** (sección Más).
 - **Gastos fijos del mes** (celular, internet, alquiler, tarjeta…): con día de vencimiento y **alertas programables** (avisa X días antes; banner persistente en Home + notificación del navegador **hasta marcar pagado**). "Pagar" registra el gasto automáticamente y "des-marcar" lo revierte.
-- Botón en Home para **borrar los datos de ejemplo y empezar desde cero**.
+- Botón en Home para **borrar los datos de ejemplo y empezar desde cero** (desaparece después del primer uso para evitar borrados accidentales).
 - **Reporte**: resumen del período exportable a **PDF** y **Excel (.xlsx)**.
 - **Nube (Supabase)**: login con enlace mágico, respaldo automático de cada cambio, mismos datos en todos tus dispositivos (local-first: la app sigue funcionando offline).
+
+## Instalarla como app (PWA)
+
+El build de producción es una **PWA instalable**: ícono propio, pantalla completa, funciona sin conexión (service worker con caché local) y atajos desde el ícono (Registrar / Escanear).
+
+1. Genera y sirve el build de producción (el service worker **no** corre en `npm run dev`):
+   ```bash
+   npm run build
+   npm run preview   # http://localhost:4173
+   ```
+2. Ábrela en tu teléfono por HTTPS (URL desplegada) y:
+   - **Android (Chrome)**: Menú ⋮ → **Instalar app** / **Añadir a pantalla de inicio**. También aparece el botón **📲 Instalar como app** en la pestaña *Más*.
+   - **iPhone (Safari)**: Compartir → **Añadir a pantalla de inicio**.
+
+> Para instalarla desde tu teléfono necesitas una **URL fija en HTTPS** (por ejemplo desplegando gratis en Vercel/Netlify). Los datos son los mismos en todos los dispositivos gracias a la nube de Supabase.
 
 ## Sincronización en la nube (Supabase)
 
