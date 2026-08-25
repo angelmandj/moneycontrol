@@ -184,6 +184,20 @@ export default function App() {
   // Conciliación general: efectivo (snapshots) + lo que te deben − lo que debes
   const netWorth = cash + loansOpen - debtsOpen
 
+  // Saldo corriente por movimiento (estado de cuenta): anclado al patrimonio actual,
+  // cada fila muestra el saldo que quedaba justo DESPUÉS de ese movimiento
+  const balMap = useMemo(() => {
+    const all = [...s.txs].sort((a, b) => +new Date(a.date) - +new Date(b.date)) // más viejo → más nuevo
+    const totalNet = all.reduce((a, t) => a + (t.type === 'income' ? t.amountUsd : t.type === 'expense' ? -t.amountUsd : 0), 0)
+    let bal = cash - totalNet // saldo antes del primer movimiento registrado
+    const map = new Map<string, number>()
+    for (const t of all) {
+      bal += t.type === 'income' ? t.amountUsd : t.type === 'expense' ? -t.amountUsd : 0
+      map.set(t.id, bal)
+    }
+    return map
+  }, [s.txs, cash])
+
   // Tendencia del neto vs mes anterior
   const prevD = new Date(now)
   prevD.setMonth(prevD.getMonth() - 1)
@@ -811,27 +825,50 @@ export default function App() {
           </Card>
 
           <Card title={`Gastos por categoría · ${scopeLbl}`}>
-            <div style={{ display: 'flex', minHeight: 150, alignItems: 'center' }}>
-              {byCat.length > 0 && (
-                <ResponsiveContainer width="44%">
-                  <PieChart>
-                    <Pie data={byCat} dataKey="value" innerRadius={42} outerRadius={64} paddingAngle={3}>
-                      {byCat.map((e) => <Cell key={e.name} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={tip} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-              <div style={{ flex: 1, fontSize: 13 }}>
-                {byCat.map((c) => (
-                  <div key={c.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 6 }}>
-                    <span style={{ color: 'var(--muted)' }}>{CAT_ICON[c.name] || '📦'} {c.name}</span>
-                    <span className="mono" style={{ whiteSpace: 'nowrap' }}>{money(c.value)}</span>
+            {byCat.length > 0 ? (
+              <>
+                <div style={{ position: 'relative', height: 168 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={byCat} dataKey="value" innerRadius={56} outerRadius={78} paddingAngle={3}>
+                        {byCat.map((e) => <Cell key={e.name} fill={e.color} />)}
+                      </Pie>
+                      <Tooltip contentStyle={tip} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div className="mono" style={{ fontWeight: 700, fontSize: 16 }}>{money(exp)}</div>
+                      <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.8 }}>total gastos</div>
+                    </div>
                   </div>
-                ))}
-                {byCat.length === 0 && <div style={{ color: 'var(--muted)' }}>Sin gastos en el período</div>}
-              </div>
-            </div>
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  {byCat.map((c) => {
+                    const pct = exp > 0 ? (c.value / exp) * 100 : 0
+                    return (
+                      <div key={c.name} style={{ marginBottom: 9 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 4 }}>
+                          <span>
+                            <i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 3, background: c.color, marginRight: 7 }} />
+                            {CAT_ICON[c.name] || '📦'} {c.name}
+                          </span>
+                          <span className="mono" style={{ whiteSpace: 'nowrap' }}>
+                            {money(c.value)}
+                            <span style={{ color: 'var(--muted)', fontSize: 11 }}> · {pct.toFixed(0)}%</span>
+                          </span>
+                        </div>
+                        <div style={{ height: 5, borderRadius: 99, background: 'var(--chip)', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 99, background: c.color, transition: 'width .4s' }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: 13, padding: '22px 0', textAlign: 'center' }}>Sin gastos en el período</p>
+            )}
           </Card>
 
           <Card title={`Saldos P2P (VES+Binance) · ${scopeLbl}`}>
@@ -856,7 +893,7 @@ export default function App() {
             {[...s.txs]
               .sort((a, b) => +new Date(b.date) - +new Date(a.date))
               .slice(0, 4)
-              .map((t) => <TxRow key={t.id} t={t} />)}
+              .map((t) => <TxRow key={t.id} t={t} bal={balMap.get(t.id)} />)}
             {s.txs.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Aún no tienes movimientos</p>}
           </Card>
 
@@ -905,7 +942,7 @@ export default function App() {
           />
           {txs.length === 0 && <p style={{ color: 'var(--muted)', marginTop: 16, textAlign: 'center' }}>Sin movimientos en este período</p>}
           {txs.map((t) => (
-            <TxRow key={t.id} t={t} onEdit={() => setEditTx(t)} onDel={() => delTx(t.id)} />
+            <TxRow key={t.id} t={t} bal={balMap.get(t.id)} onEdit={() => setEditTx(t)} onDel={() => delTx(t.id)} />
           ))}
         </>
       )}
@@ -1448,7 +1485,7 @@ export default function App() {
 
 /* ---------- Componentes ---------- */
 
-function TxRow({ t, onEdit, onDel }: { t: Transaction; onEdit?: () => void; onDel?: () => void }) {
+function TxRow({ t, bal, onEdit, onDel }: { t: Transaction; bal?: number; onEdit?: () => void; onDel?: () => void }) {
   const vesEq = t.amountVes ?? (t.rateVes ? t.amountUsd * t.rateVes : 0)
   return (
     <div style={row}>
@@ -1478,6 +1515,11 @@ function TxRow({ t, onEdit, onDel }: { t: Transaction; onEdit?: () => void; onDe
         <div className="mono" style={{ color: t.type === 'income' ? 'var(--green)' : 'var(--red)', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13 }}>
           {t.type === 'income' ? '+' : '-'}{money(t.amountUsd)}
         </div>
+        {bal !== undefined && (
+          <div className="mono" style={{ fontSize: 10, fontWeight: 600, color: bal >= 0 ? 'var(--blue)' : 'var(--red)', whiteSpace: 'nowrap' }}>
+            Saldo {bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+        )}
         {t.rateVes ? (
           <div className="mono" style={{ fontSize: 10, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
             {ves(vesEq)} @{t.rateVes}
