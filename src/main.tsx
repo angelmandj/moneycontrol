@@ -10,8 +10,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 )
 
 // PWA: registrar el service worker solo en producción (en dev estorbaría el HMR)
+// import.meta.env.BASE_URL cubre el despliegue bajo subruta (/moneycontrol/ en GitHub Pages)
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {})
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {})
   })
 }

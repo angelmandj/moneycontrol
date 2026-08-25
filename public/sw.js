@@ -9,8 +9,9 @@ const CACHE = 'moneycontrol-v1'
 const FONTS = 'moneycontrol-fonts-v1'
 
 self.addEventListener('install', (e) => {
+  // Rutas relativas al propio sw.js: funciona en raíz "/" y en subruta "/moneycontrol/"
   e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'])),
+    caches.open(CACHE).then((c) => c.addAll(['./', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'])),
   )
   self.skipWaiting()
 })
@@ -57,10 +58,10 @@ self.addEventListener('fetch', (e) => {
       fetch(req)
         .then((res) => {
           const copy = res.clone()
-          caches.open(CACHE).then((c) => c.put('/', copy))
+          caches.open(CACHE).then((c) => c.put('./', copy))
           return res
         })
-        .catch(() => caches.match('/')),
+        .catch(() => caches.match('./')),
     )
     return
   }
