@@ -1511,21 +1511,25 @@ function TxRow({ t, bal, onEdit, onDel }: { t: Transaction; bal?: number; onEdit
           )}
         </div>
       </button>
-      <div style={{ textAlign: 'right' }}>
-        <div className="mono" style={{ color: t.type === 'income' ? 'var(--green)' : 'var(--red)', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13 }}>
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>Monto</div>
+        <div className="mono" style={{ color: t.type === 'income' ? 'var(--green)' : 'var(--red)', fontWeight: 700, whiteSpace: 'nowrap', fontSize: 13 }}>
           {t.type === 'income' ? '+' : '-'}{money(t.amountUsd)}
         </div>
-        {bal !== undefined && (
-          <div className="mono" style={{ fontSize: 10, fontWeight: 600, color: bal >= 0 ? 'var(--blue)' : 'var(--red)', whiteSpace: 'nowrap' }}>
-            Saldo {bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-        )}
         {t.rateVes ? (
           <div className="mono" style={{ fontSize: 10, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
             {ves(vesEq)} @{t.rateVes}
           </div>
         ) : null}
       </div>
+      {bal !== undefined && (
+        <div style={{ textAlign: 'right', flexShrink: 0, borderLeft: '1px solid var(--line)', paddingLeft: 10, minWidth: 82 }}>
+          <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>Saldo</div>
+          <div className="mono" style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', color: bal >= 0 ? 'var(--blue)' : 'var(--red)' }}>
+            {bal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+        </div>
+      )}
       {onDel && <button style={delBtn} title="Eliminar movimiento" onClick={onDel}>✕</button>}
     </div>
   )
