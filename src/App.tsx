@@ -675,7 +675,8 @@ export default function App() {
     if (!/^\S+@\S+\.\S+$/.test(mail)) return ping('Escribe un correo válido')
     const { error } = await supabase.auth.signInWithOtp({
       email: mail,
-      options: { emailRedirectTo: window.location.origin },
+      // origin + BASE_URL: en producción incluye la subruta (/moneycontrol/); sin ella caía en 404
+      options: { emailRedirectTo: window.location.origin + import.meta.env.BASE_URL },
     })
     ping(error ? error.message : `Enlace enviado a ${mail} · revísalo en este dispositivo`)
     if (!error) setEmail('')
