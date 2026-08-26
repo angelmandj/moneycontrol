@@ -10,6 +10,34 @@
   --gold: #f5c46b;
   --blue: #6ea8ff;
   --violet: #a78bfa;
+  --well: rgba(0, 0, 0, 0.25);
+  --input: rgba(0, 0, 0, 0.35);
+  --chip: rgba(255, 255, 255, 0.03);
+  --grid: rgba(255, 255, 255, 0.05);
+  --navbg: rgba(10, 14, 24, 0.86);
+  --heroA: rgba(110, 168, 255, 0.16);
+  --heroB: rgba(62, 224, 167, 0.08);
+}
+
+[data-theme='light'] {
+  --bg: #edf1f8;
+  --bg2: #ffffff;
+  --card: rgba(255, 255, 255, 0.85);
+  --line: rgba(15, 23, 42, 0.1);
+  --text: #0f1b2e;
+  --muted: #5d6d8c;
+  --green: #0ea877;
+  --red: #e4486d;
+  --gold: #c98f1e;
+  --blue: #3b7ddb;
+  --violet: #7c5cd6;
+  --well: rgba(15, 23, 42, 0.05);
+  --input: rgba(15, 23, 42, 0.05);
+  --chip: rgba(15, 23, 42, 0.045);
+  --grid: rgba(15, 23, 42, 0.07);
+  --navbg: rgba(255, 255, 255, 0.9);
+  --heroA: rgba(110, 168, 255, 0.3);
+  --heroB: rgba(62, 224, 167, 0.2);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -17,13 +45,15 @@ html, body, #root { min-height: 100%; }
 body {
   font-family: 'Instrument Sans', system-ui, sans-serif;
   background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(110, 168, 255, 0.18), transparent 50%),
+    radial-gradient(1200px 600px at 10% -10%, var(--heroA), transparent 50%),
     radial-gradient(900px 500px at 100% 0%, rgba(167, 139, 250, 0.14), transparent 45%),
-    radial-gradient(800px 500px at 50% 120%, rgba(62, 224, 167, 0.08), transparent 40%),
+    radial-gradient(800px 500px at 50% 120%, var(--heroB), transparent 40%),
     var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  transition: background 0.3s, color 0.3s;
 }
 button, input, select, textarea { font-family: inherit; }
+select option { background: var(--bg2); color: var(--text); }
 .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 ::-webkit-scrollbar { width: 0; height: 0; }

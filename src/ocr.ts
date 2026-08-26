@@ -7,6 +7,7 @@ const CAT_MAP: [RegExp, string][] = [
   [/binance|p2p|usdt|tether|spread/i, 'P2P'],
   [/farmacia|medico|salud/i, 'Salud'],
   [/netflix|spotify|juego|ocio/i, 'Ocio'],
+  [/tarjeta|credito|deuda|prestamo bancario/i, 'Deudas'],
 ]
 
 export async function readReceipt(file: File | Blob) {
