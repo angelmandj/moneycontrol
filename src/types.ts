@@ -89,6 +89,8 @@ export interface Store {
   telegram: { token: string; chatId: string; lastUpdate: number }
   /** Última tasa Bs/USDT conocida */
   rate: number
+  /** Tasa automática desde una celda de Google Sheets (publicada/compartida); se refresca sola */
+  sheetRate?: { url: string; cell: string; on: boolean }
   /** Meta de gasto diario en USDT (0 = sin meta) */
   dailyGoal: number
   /** Presupuesto mensual en USDT por categoría */

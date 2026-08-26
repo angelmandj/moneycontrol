@@ -6,6 +6,7 @@ import {
 import { loadStore, saveStore, uid, inPeriod, weekOfMonth, resetData, toNum, monthKey, hashPin, coerceStore } from './store'
 import { parseTelegramCaption, readReceipt } from './ocr'
 import { exportPdf, exportXlsx } from './report'
+import { sheetCellCsvUrl, fetchSheetRate } from './sheetRate'
 import { supabase, pushStore, pullStore } from './supabase'
 import type { Debt, Loan, Period, Recurring, Snapshot, Store, Template, Transaction } from './types'
 
@@ -84,6 +85,15 @@ export default function App() {
   const [unlocked, setUnlocked] = useState(false)
   const [ldTab, setLdTab] = useState<'owed' | 'owe'>('owed')
   const [toast, setToast] = useState('')
+  // --- Reporte avanzado ---
+  const [repMode, setRepMode] = useState<'general' | 'adv'>('general')
+  const [advPeriod, setAdvPeriod] = useState<Period>('month')
+  const [advCats, setAdvCats] = useState<string[]>([])
+  const [advType, setAdvType] = useState<'all' | 'income' | 'expense'>('all')
+  const [advQ, setAdvQ] = useState('')
+  const [advPerson, setAdvPerson] = useState('')
+  const [advGainOnly, setAdvGainOnly] = useState(false)
+  const [advSel, setAdvSel] = useState<Set<string> | null>(null) // null = todos los filtrados
   // --- Nube (Supabase) ---
   const [sbUser, setSbUser] = useState<{ id: string; email: string } | null>(null)
   const [syncSt, setSyncSt] = useState<'off' | 'saving' | 'saved' | 'error'>('off')
@@ -410,10 +420,10 @@ export default function App() {
   const closeToday = s.snaps.some((x) => x.session === 'close' && new Date(x.date).toDateString() === now.toDateString())
   const showCloseReminder = now.getHours() >= 17 && !closeToday
 
-  async function onExport(kind: 'pdf' | 'xlsx') {
+  async function onExport(kind: 'pdf' | 'xlsx', data?: Parameters<typeof exportPdf>[0]) {
     setExporting(kind)
     try {
-      const data = {
+      const d = data ?? {
         scope: scopeLbl,
         generatedAt: new Date(),
         rate: s.rate,
@@ -441,14 +451,71 @@ export default function App() {
         billsPendingTotal,
         byCat: repByCat,
       }
-      if (kind === 'pdf') await exportPdf(data)
-      else await exportXlsx(data)
+      if (kind === 'pdf') await exportPdf(d)
+      else await exportXlsx(d)
       ping('Reporte descargado')
     } catch (e) {
       console.error(e)
       ping('No se pudo generar el reporte')
     } finally {
       setExporting('')
+    }
+  }
+
+  // --- Reporte avanzado: movimientos filtrados y seleccionables a mano ---
+  const advTxs = useMemo(() => {
+    const qq = advQ.trim().toLowerCase()
+    return s.txs
+      .filter((t) => inPeriod(t.date, advPeriod))
+      .filter((t) => advCats.length === 0 || advCats.includes(t.category))
+      .filter((t) => advType === 'all' || t.type === advType)
+      .filter((t) => !advPerson || t.person === advPerson)
+      .filter((t) => !advGainOnly || t.note.toLowerCase().startsWith('ganancia hoy'))
+      .filter((t) => !qq || `${t.note} ${t.category} ${t.person || ''}`.toLowerCase().includes(qq))
+      .sort((a, b) => +new Date(b.date) - +new Date(a.date))
+  }, [s.txs, advPeriod, advCats, advType, advPerson, advGainOnly, advQ])
+
+  const advSelSet = advSel ?? new Set(advTxs.map((t) => t.id))
+  const advPicked = advTxs.filter((t) => advSelSet.has(t.id))
+  const advInc = advPicked.filter((t) => t.type === 'income').reduce((a, t) => a + t.amountUsd, 0)
+  const advExp = advPicked.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amountUsd, 0)
+
+  const advPeriodLbl =
+    advPeriod === 'day' ? 'Hoy' : advPeriod === 'week' ? 'Esta semana' : advPeriod === 'month' ? 'Este mes' : advPeriod === 'year' ? 'Este año' : 'Todo el historial'
+
+  function advScope() {
+    const parts: string[] = [advPeriodLbl]
+    if (advGainOnly) parts.push('Solo «Ganancia hoy»')
+    if (advCats.length) parts.push(`Categorías: ${advCats.join(', ')}`)
+    if (advType !== 'all') parts.push(advType === 'income' ? 'Ingresos' : 'Gastos')
+    if (advPerson) parts.push(`Persona: ${advPerson}`)
+    if (advQ.trim()) parts.push(`«${advQ.trim()}»`)
+    return `Filtro avanzado · ${parts.join(' · ')}`
+  }
+
+  function buildAdvData(sel: Transaction[]) {
+    const byCat = [...new Set(sel.filter((t) => t.type === 'expense').map((t) => t.category))].map((c) => ({
+      name: c,
+      value: sel.filter((t) => t.type === 'expense' && t.category === c).reduce((a, t) => a + t.amountUsd, 0),
+    })).filter((x) => x.value > 0)
+    return {
+      scope: advScope(),
+      generatedAt: new Date(),
+      rate: s.rate,
+      inc: advInc,
+      exp: advExp,
+      cash,
+      loansOpen,
+      debtsOpen,
+      netWorth,
+      txs: [...sel].sort((a, b) => +new Date(a.date) - +new Date(b.date)),
+      snaps: [],
+      loans: [],
+      debts: [],
+      bills: [],
+      billsPendingCount: 0,
+      billsPendingTotal: 0,
+      byCat,
     }
   }
 
@@ -475,6 +542,44 @@ export default function App() {
         ping('Movimiento eliminado')
       },
     })
+  }
+
+  /** Guarda un snapshot; al registrar el CIERRE crea/actualiza automáticamente "Ganancia hoy" (cierre − apertura del día) */
+  function saveSnap(sn: Snapshot, rate: number) {
+    const day = sn.date.slice(0, 10)
+    const open = sn.session === 'close'
+      ? [...s.snaps, sn].filter((x) => x.session === 'open' && x.date.slice(0, 10) === day).sort((a, b) => +new Date(b.date) - +new Date(a.date))[0]
+      : undefined
+    const profit = open ? (sn.vesInUsdt + sn.binanceUsdt) - (open.vesInUsdt + open.binanceUsdt) : null
+
+    setS((p) => {
+      const snaps = [sn, ...p.snaps]
+      let txs = p.txs
+      if (sn.session === 'close' && open) {
+        // Reemplaza la ganancia automática de ese día (id estable por fecha)
+        const gainDay = open.date.slice(0, 10)
+        txs = txs.filter((t) => t.id !== `gain-${gainDay}`)
+        const net = +profit!.toFixed(4)
+        if (Math.abs(net) > 0.0001) {
+          txs = [{
+            id: `gain-${gainDay}`,
+            type: net >= 0 ? 'income' : 'expense',
+            amountUsd: Math.abs(net),
+            category: 'P2P',
+            note: 'Ganancia hoy',
+            date: sn.date,
+            source: 'p2p',
+            rateVes: rate,
+          }, ...txs]
+        }
+      }
+      return { ...p, rate, snaps, txs }
+    })
+    if (profit !== null) {
+      ping(`Cierre guardado · 💰 Ganancia hoy: ${profit >= 0 ? '+' : '−'}${money(Math.abs(profit))}`)
+    } else {
+      ping(`Snapshot guardado · tasa ${rate} Bs`)
+    }
   }
 
   function startFromZero() {
@@ -1057,7 +1162,13 @@ export default function App() {
           <p style={{ color: 'var(--muted)', marginBottom: 12, fontSize: 14 }}>
             Cada día registra apertura y cierre: Bs en cuentas (convertidos a USDT con la tasa del momento) y USDT en Binance.
           </p>
-          <SnapForm rate={s.rate} onSave={(sn, r) => { setS((p) => ({ ...p, rate: r, snaps: [sn, ...p.snaps] })); ping(`Snapshot guardado · tasa ${r} Bs`) }} />
+          <RateCard
+            rate={s.rate}
+            cfg={s.sheetRate || { url: '', cell: 'B1', on: false }}
+            onSetRate={(r) => setS((p) => (r === p.rate ? p : { ...p, rate: r }))}
+            onCfg={(c) => setS((p) => ({ ...p, sheetRate: c }))}
+          />
+          <SnapForm rate={s.rate} onSave={saveSnap} />
           {recon && (
             <div style={{
               ...card, marginTop: 12,
@@ -1084,23 +1195,35 @@ export default function App() {
             </div>
           )}
           {s.snaps.length === 0 && <p style={{ color: 'var(--muted)', marginTop: 16, textAlign: 'center' }}>Aún no hay snapshots</p>}
-          {[...s.snaps].sort((a, b) => +new Date(b.date) - +new Date(a.date)).map((sn) => (
-            <div key={sn.id} style={row}>
-              <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(110,168,255,.1)', display: 'grid', placeItems: 'center', fontSize: 18 }}>
-                {sn.session === 'open' ? '🌅' : '🌙'}
-              </div>
-              <div style={{ flex: 1 }}>
-                <b>{sn.session === 'open' ? 'Apertura' : 'Cierre'}</b>
-                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                  {new Date(sn.date).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}{sn.rate ? ` · tasa ${sn.rate} Bs` : ''}
+          {[...s.snaps].sort((a, b) => +new Date(b.date) - +new Date(a.date)).map((sn) => {
+            const day = sn.date.slice(0, 10)
+            const openSn = sn.session === 'close'
+              ? s.snaps.filter((x) => x.session === 'open' && x.date.slice(0, 10) === day).sort((a, b) => +new Date(b.date) - +new Date(a.date))[0]
+              : undefined
+            const gain = openSn ? (sn.vesInUsdt + sn.binanceUsdt) - (openSn.vesInUsdt + openSn.binanceUsdt) : null
+            return (
+              <div key={sn.id} style={row}>
+                <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(110,168,255,.1)', display: 'grid', placeItems: 'center', fontSize: 18 }}>
+                  {sn.session === 'open' ? '🌅' : '🌙'}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <b>{sn.session === 'open' ? 'Apertura' : 'Cierre'}</b>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    {new Date(sn.date).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}{sn.rate ? ` · tasa ${sn.rate} Bs` : ''}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 13 }}>
+                  <div className="mono">{money(sn.vesInUsdt)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>({sn.ves.toLocaleString('es-VE')} Bs)</span></div>
+                  <div className="mono" style={{ color: 'var(--blue)' }}>Binance {money(sn.binanceUsdt)}</div>
+                  {gain !== null && (
+                    <div className="mono" style={{ fontSize: 12, fontWeight: 700, color: gain >= 0 ? 'var(--green)' : 'var(--red)', marginTop: 2 }}>
+                      💰 Ganancia {gain >= 0 ? '+' : '−'}{money(Math.abs(gain))}
+                    </div>
+                  )}
                 </div>
               </div>
-              <div style={{ textAlign: 'right', fontSize: 13 }}>
-                <div className="mono">{money(sn.vesInUsdt)} <span style={{ color: 'var(--muted)', fontSize: 11 }}>({sn.ves.toLocaleString('es-VE')} Bs)</span></div>
-                <div className="mono" style={{ color: 'var(--blue)' }}>Binance {money(sn.binanceUsdt)}</div>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </>
       )}
 
@@ -1446,41 +1569,170 @@ export default function App() {
       {tab === 'rep' && (
         <>
           <BackBtn onClick={() => setTab('mas')} />
-          <div style={hero}>
-            <h2>Reportes</h2>
-            <p style={{ color: 'var(--muted)', fontSize: 14, margin: '8px 0 4px' }}>
-              Alcance: <b style={{ color: 'var(--text)' }}>{scopeLbl}</b> · {repTxs.length} movimientos
-            </p>
-            <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
-              Ajusta el período y la semana con los filtros de arriba antes de exportar.
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
-              <Mini label="Ingresos" value={money(repInc)} color="var(--green)" />
-              <Mini label="Gastos" value={money(repExp)} color="var(--red)" />
-              <Mini label="Neto" value={money(repInc - repExp)} color="var(--blue)" />
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button style={{ ...btn, flex: 1, opacity: exporting ? 0.6 : 1 }} disabled={!!exporting} onClick={() => onExport('pdf')}>
-                {exporting === 'pdf' ? 'Generando…' : '📄 Exportar PDF'}
-              </button>
-              <button
-                style={{ ...btn, flex: 1, background: 'rgba(62,224,167,.15)', color: 'var(--green)', border: '1px solid rgba(62,224,167,.3)', opacity: exporting ? 0.6 : 1 }}
-                disabled={!!exporting}
-                onClick={() => onExport('xlsx')}
-              >
-                {exporting === 'xlsx' ? 'Generando…' : '📊 Exportar Excel'}
-              </button>
-            </div>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <button style={chip(repMode === 'general')} onClick={() => setRepMode('general')}>📄 General</button>
+            <button style={chip(repMode === 'adv')} onClick={() => setRepMode('adv')}>🧪 Avanzado / P2P</button>
           </div>
-          <Card title="El reporte incluye">
-            <ul style={{ fontSize: 13, color: 'var(--muted)', paddingLeft: 18, lineHeight: 1.9 }}>
-              <li>Resumen del período: ingresos, gastos, neto, patrimonio neto</li>
-              <li>Detalle de movimientos con la tasa Bs/USDT de cada momento</li>
-              <li>Gastos por categoría</li>
-              <li>Snapshots P2P (aperturas y cierres)</li>
-              <li>Préstamos (te deben) y deudas (tú debes)</li>
-            </ul>
-          </Card>
+
+          {repMode === 'general' && (
+            <>
+              <div style={hero}>
+                <h2>Reportes</h2>
+                <p style={{ color: 'var(--muted)', fontSize: 14, margin: '8px 0 4px' }}>
+                  Alcance: <b style={{ color: 'var(--text)' }}>{scopeLbl}</b> · {repTxs.length} movimientos
+                </p>
+                <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 14 }}>
+                  Ajusta el período y la semana con los filtros de arriba antes de exportar.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
+                  <Mini label="Ingresos" value={money(repInc)} color="var(--green)" />
+                  <Mini label="Gastos" value={money(repExp)} color="var(--red)" />
+                  <Mini label="Neto" value={money(repInc - repExp)} color="var(--blue)" />
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button style={{ ...btn, flex: 1, opacity: exporting ? 0.6 : 1 }} disabled={!!exporting} onClick={() => onExport('pdf')}>
+                    {exporting === 'pdf' ? 'Generando…' : '📄 Exportar PDF'}
+                  </button>
+                  <button
+                    style={{ ...btn, flex: 1, background: 'rgba(62,224,167,.15)', color: 'var(--green)', border: '1px solid rgba(62,224,167,.3)', opacity: exporting ? 0.6 : 1 }}
+                    disabled={!!exporting}
+                    onClick={() => onExport('xlsx')}
+                  >
+                    {exporting === 'xlsx' ? 'Generando…' : '📊 Exportar Excel'}
+                  </button>
+                </div>
+              </div>
+              <Card title="El reporte incluye">
+                <ul style={{ fontSize: 13, color: 'var(--muted)', paddingLeft: 18, lineHeight: 1.9 }}>
+                  <li>Resumen del período: ingresos, gastos, neto, patrimonio neto</li>
+                  <li>Detalle de movimientos con la tasa Bs/USDT de cada momento</li>
+                  <li>Gastos por categoría</li>
+                  <li>Snapshots P2P (aperturas y cierres)</li>
+                  <li>Préstamos (te deben) y deudas (tú debes)</li>
+                </ul>
+              </Card>
+            </>
+          )}
+
+          {repMode === 'adv' && (
+            <>
+              <div style={hero}>
+                <h2>Reporte avanzado</h2>
+                <p style={{ color: 'var(--muted)', fontSize: 13, margin: '6px 0 12px' }}>
+                  Filtra por período, categorías, persona o palabra, y marca a mano qué movimientos incluir. Ideal para consultar tus <b style={{ color: 'var(--text)' }}>ganancias P2P</b> y descontar pagos (trabajadores u otros).
+                </p>
+
+                {/* Presets rápidos */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <button
+                    style={chip(advGainOnly)}
+                    onClick={() => { setAdvCats(['P2P']); setAdvType('all'); setAdvPerson(''); setAdvQ(''); setAdvGainOnly(true) }}
+                  >⚡ Ganancias P2P (Ganancia hoy)</button>
+                  <button
+                    style={chip(false)}
+                    onClick={() => { setAdvCats(['P2P', ...(s.customCats.filter((c) => /trabajad/i.test(c)))]); setAdvGainOnly(false); setAdvType('all') }}
+                  >💼 P2P menos trabajadores</button>
+                  <button
+                    style={chip(false)}
+                    onClick={() => { setAdvCats([]); setAdvType('all'); setAdvQ(''); setAdvPerson(''); setAdvGainOnly(false); setAdvSel(null) }}
+                  >Limpiar filtros</button>
+                </div>
+
+                {/* Período */}
+                <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 10 }}>
+                  {([['day', 'Hoy'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año'], ['all', 'Todo']] as [Period, string][]).map(([p, l]) => (
+                    <button key={p} style={chip(advPeriod === p)} onClick={() => setAdvPeriod(p)}>{l}</button>
+                  ))}
+                </div>
+
+                {/* Categorías multi-selección */}
+                <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, marginBottom: 8 }}>
+                  {filterCats.map((c) => (
+                    <button
+                      key={c}
+                      style={chip(advCats.includes(c))}
+                      onClick={() => setAdvCats((p) => (p.includes(c) ? p.filter((x) => x !== c) : [...p, c]))}
+                    >
+                      {catIcon(c)} {c}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--muted)', margin: '0 0 10px' }}>
+                  Sin categoría marcada = todas. 💡 Marca <b>P2P</b> + tu categoría de trabajadores y el <b>Neto</b> ya sale con sus pagos descontados.
+                </p>
+
+                {/* Tipo + solo ganancia */}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {([['all', 'Todo'], ['income', 'Ingresos'], ['expense', 'Gastos']] as const).map(([t, l]) => (
+                    <button key={t} style={chip(advType === t)} onClick={() => setAdvType(t)}>{l}</button>
+                  ))}
+                  <button style={chip(advGainOnly)} onClick={() => setAdvGainOnly((v) => !v)}>💰 Solo «Ganancia hoy»</button>
+                </div>
+
+                <input value={advQ} onChange={(e) => setAdvQ(e.target.value)} placeholder="Palabra clave en la descripción…" style={{ ...input, marginBottom: 8 }} />
+                {persons.length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 8 }}>
+                    <button style={chip(advPerson === '')} onClick={() => setAdvPerson('')}>👥 Todas</button>
+                    {persons.map((p) => (
+                      <button key={p} style={chip(advPerson === p)} onClick={() => setAdvPerson(advPerson === p ? '' : p)}>👤 {p}</button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Resumen de la selección */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, margin: '12px 0 10px' }}>
+                  <Mini label="Ingresos" value={money(advInc)} color="var(--green)" />
+                  <Mini label="Egresos" value={money(advExp)} color="var(--red)" />
+                  <Mini label="Neto" value={money(advInc - advExp)} color="var(--blue)" />
+                </div>
+                <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
+                  {advPicked.length} de {advTxs.length} movimiento{advTxs.length === 1 ? '' : 's'} seleccionado{advPicked.length === 1 ? '' : 's'} · {advPeriodLbl.toLowerCase()}
+                </p>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    style={{ ...btn, flex: 1, opacity: exporting || advPicked.length === 0 ? 0.6 : 1 }}
+                    disabled={!!exporting || advPicked.length === 0}
+                    onClick={() => onExport('pdf', buildAdvData(advPicked))}
+                  >{exporting === 'pdf' ? 'Generando…' : '📄 PDF de la selección'}</button>
+                  <button
+                    style={{ ...btn, flex: 1, background: 'rgba(62,224,167,.15)', color: 'var(--green)', border: '1px solid rgba(62,224,167,.3)', opacity: exporting || advPicked.length === 0 ? 0.6 : 1 }}
+                    disabled={!!exporting || advPicked.length === 0}
+                    onClick={() => onExport('xlsx', buildAdvData(advPicked))}
+                  >{exporting === 'xlsx' ? 'Generando…' : '📊 Excel de la selección'}</button>
+                </div>
+              </div>
+
+              {/* Selector de ítems */}
+              <div style={{ display: 'flex', gap: 8, margin: '4px 0 8px' }}>
+                <button style={chip(false)} onClick={() => setAdvSel(new Set(advTxs.map((t) => t.id)))}>✅ Todos los filtrados</button>
+                <button style={chip(false)} onClick={() => setAdvSel(new Set())}>⬜ Ninguno</button>
+              </div>
+              {advTxs.length === 0 && (
+                <p style={{ color: 'var(--muted)', marginTop: 16, textAlign: 'center', fontSize: 13 }}>Sin movimientos con estos filtros</p>
+              )}
+              {advTxs.map((t) => {
+                const on = advSelSet.has(t.id)
+                return (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setAdvSel(new Set(advSelSet.has(t.id) ? [...advSelSet].filter((id) => id !== t.id) : [...advSelSet, t.id]))}
+                      style={{ width: 18, height: 18, marginTop: 12, accentColor: '#6ea8ff', flexShrink: 0, cursor: 'pointer' }}
+                    />
+                    <div
+                      style={{ flex: 1, opacity: on ? 1 : 0.45, transition: 'opacity .15s', cursor: 'pointer' }}
+                      onClick={() => setAdvSel(new Set(on ? [...advSelSet].filter((id) => id !== t.id) : [...advSelSet, t.id]))}
+                    >
+                      <TxRow t={t} bal={balMap.get(t.id)} />
+                    </div>
+                  </div>
+                )
+              })}
+            </>
+          )}
         </>
       )}
 
@@ -2155,6 +2407,117 @@ function QuickAdd({ onAdd, rate, onRate, templates, cats, onSaveTemplate, onDelT
           onClick={() => onSaveTemplate({ id: uid(), type: kind, amountUsd: +usdNow.toFixed(4), category: effCat(cat, customCat), note, person: person || undefined })}
         >☆</button>
       </div>
+    </div>
+  )
+}
+
+/** Tarjeta para fijar la tasa USDT (Bs) de toda la app, manual o automática desde una celda de Google Sheets */
+function RateCard({ rate, cfg, onSetRate, onCfg }: {
+  rate: number
+  cfg: { url: string; cell: string; on: boolean }
+  onSetRate: (r: number) => void
+  onCfg: (c: { url: string; cell: string; on: boolean }) => void
+}) {
+  const [rateStr, setRateStr] = useState(String(rate))
+  const [url, setUrl] = useState(cfg.url)
+  const [cell, setCell] = useState(cfg.cell || 'B1')
+  const [st, setSt] = useState<{ at: number | null; err: string | null; busy: boolean }>({ at: null, err: null, busy: false })
+  useEffect(() => setRateStr(String(rate)), [rate])
+  useEffect(() => { setUrl(cfg.url); setCell(cfg.cell || 'B1') }, [cfg.url, cfg.cell])
+
+  const pull = async (u: string, c: string): Promise<boolean> => {
+    setSt((p) => ({ ...p, busy: true, err: null }))
+    const n = await fetchSheetRate(u, c)
+    if (n && Math.abs(n - rate) > 0.0001) onSetRate(n)
+    setSt(n ? { at: Date.now(), err: null, busy: false } : { at: null, err: 'No pude leer la celda', busy: false })
+    return !!n
+  }
+
+  // Refresco automático: al activarse, cada 10 min y al volver a la app
+  useEffect(() => {
+    if (!cfg.on || !cfg.url.trim() || !sheetCellCsvUrl(cfg.url, cfg.cell)) return
+    let stop = false
+    const run = () => { if (!stop && document.visibilityState === 'visible') void pull(cfg.url, cfg.cell || 'B1') }
+    run()
+    const iv = setInterval(run, 10 * 60 * 1000)
+    const onVis = () => run()
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('focus', onVis)
+    return () => { stop = true; clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.on, cfg.url, cfg.cell])
+
+  const ago = (at: number) => {
+    const m = Math.max(0, Math.round((Date.now() - at) / 60000))
+    return m < 1 ? 'justo ahora' : m === 1 ? 'hace 1 min' : `hace ${m} min`
+  }
+
+  return (
+    <div style={{ ...card, marginBottom: 12, borderColor: cfg.on ? 'rgba(62,224,167,.35)' : 'var(--line)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 18 }}>💱</span>
+        <div style={{ flex: 1 }}>
+          <b style={{ fontSize: 14 }}>Precio del USDT</b>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            Tasa actual: <b className="mono" style={{ color: 'var(--gold)' }}>{rate} Bs</b>{cfg.on && st.at ? ` · auto · ${ago(st.at)}` : ''}
+          </div>
+        </div>
+        {cfg.on && (
+          <button style={chip(false)} onClick={() => { void pull(cfg.url, cfg.cell || 'B1') }} title="Actualizar ahora">
+            {st.busy ? '⏳' : '🔄'}
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+        <input className="mono" inputMode="decimal" placeholder="Ej: 225.50" value={rateStr} onChange={(e) => setRateStr(e.target.value)} style={input} />
+        <button
+          style={{ ...btn, padding: '10px 16px' }}
+          onClick={() => { const r = toNum(rateStr); if (r > 0) onSetRate(r) }}
+        >Establecer</button>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>
+        Se usa como tasa por defecto en toda la app. Los movimientos ya guardados conservan cada uno su propia tasa del momento.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer' }} onClick={() => onCfg({ ...cfg, on: !cfg.on })}>
+        <div style={{ width: 38, height: 22, borderRadius: 99, background: cfg.on ? 'var(--green)' : 'var(--chip)', position: 'relative', transition: 'background .2s', flexShrink: 0 }}>
+          <div style={{ position: 'absolute', top: 3, left: cfg.on ? 18 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
+        </div>
+        <span style={{ fontSize: 13, color: 'var(--muted)' }}>Automática desde <b style={{ color: 'var(--text)' }}>Google Sheets</b> (cada 10 min)</span>
+      </div>
+
+      {cfg.on && (
+        <div style={{ marginTop: 10, background: 'var(--well)', borderRadius: 14, padding: 12 }}>
+          <label style={lbl}>URL de tu hoja de Google</label>
+          <input placeholder="https://docs.google.com/spreadsheets/d/…" value={url} onChange={(e) => setUrl(e.target.value)} style={{ ...input, fontSize: 13 }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 8, marginTop: 8, alignItems: 'center' }}>
+            <input placeholder="Celda (B1)" value={cell} onChange={(e) => setCell(e.target.value.toUpperCase())} style={{ ...input, textTransform: 'uppercase' }} />
+            <button
+              style={{ ...btn, opacity: st.busy ? 0.6 : 1 }}
+              disabled={st.busy}
+              onClick={async () => {
+                const u = url.trim(), c = (cell || 'B1').trim()
+                const ok = await pull(u, c)
+                if (ok) onCfg({ url: u, cell: c, on: true })
+              }}
+            >{st.busy ? 'Leyendo…' : 'Guardar y probar'}</button>
+          </div>
+          {st.err && (
+            <p style={{ fontSize: 12, color: 'var(--gold)', marginTop: 8, lineHeight: 1.5 }}>
+              ⚠️ No pude leerla. En tu hoja: <b>Compartir → «Cualquier persona con el enlace»</b> (o Archivo → Compartir → <b>Publicar en la web</b>) y prueba de nuevo.
+            </p>
+          )}
+          {!st.err && st.at && (
+            <p style={{ fontSize: 12, color: 'var(--green)', marginTop: 8 }}>
+              ✓ Conectada · tasa {rate} Bs leída {ago(st.at)} · se actualiza sola cada 10 min
+            </p>
+          )}
+          <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+            Cambia el precio en la celda <b className="mono">{cell || 'B1'}</b> de tu hoja durante el día: la app lo toma sola y lo aplica a las conversiones nuevas.
+          </p>
+        </div>
+      )}
     </div>
   )
 }

@@ -11,6 +11,7 @@ const seed = (): Store => {
   }
   return {
     rate: 95,
+    sheetRate: { url: '', cell: 'B1', on: false },
     dailyGoal: 0,
     budgets: { Comida: 40, Transporte: 15 },
     templates: [],
@@ -65,6 +66,7 @@ export function coerceStore(raw: any): Store | null {
   if (!Array.isArray(raw.debts)) merged.debts = []
   if (!Array.isArray(raw.recurring)) merged.recurring = []
   if (!Array.isArray(raw.customCats)) merged.customCats = []
+  if (!raw.sheetRate || typeof raw.sheetRate !== 'object') merged.sheetRate = { url: '', cell: 'B1', on: false }
   return merged
 }
 

@@ -16,6 +16,9 @@ npm run dev
 - **Home**: patrimonio, charts con título de mes y semana (1–4), ingresos vs gastos por período.
 - **Movs**: buscador + filtros + micro-movimientos; cada movimiento se puede eliminar.
 - **P2P**: apertura/cierre de saldos VES y Binance; al convertir Bs se pide el precio actual del USDT.
+- **💱 Precio del USDT en la sección P2P**: tarjeta para fijarlo manualmente (aplica a toda la app por defecto) o tomarlo **automáticamente de una celda de tu Google Sheet** (cada 10 min, al abrir la app y con botón 🔄). Cambia el precio en tu hoja durante el día y la app lo adopta sola.
+- **💰 Ganancia hoy**: al registrar el **cierre** del día se crea solo el movimiento «Ganancia hoy» (cierre − apertura, en USDT, categoría P2P); si ya existía se recalcula. Cada cierre muestra su insignia de ganancia en la lista de snapshots.
+- **🧪 Reporte avanzado / P2P**: período propio (Hoy/Semana/Mes/Año/Todo), categorías multi-selección (incluye las personalizadas), tipo, persona, palabra clave y «Solo Ganancia hoy», con **presets** (⚡ Ganancias P2P · 💼 P2P menos trabajadores) y **selección manual por ítem** — exporta solo lo marcado a **PDF/Excel** con Ingresos/Egresos/Neto.
 - **Préstamos y deudas**: quién te debe (cobros) y **cuánto debes tú** (deudas con nombre y monto; al marcar "Pagada" se registra el gasto). La conciliación general del Home muestra efectivo + te deben − debes = **patrimonio neto**.
 - Todo se muestra en **USDT** (con su equivalente en Bs debajo) y cada movimiento/snapshot guarda la tasa (Bs/USDT) del momento.
 - **Escanear facturas en Bs**: el OCR detecta el monto, te pregunta el precio actual del USDT y registra el gasto convertido (USDT + Bs).
@@ -61,3 +64,7 @@ El build de producción es una **PWA instalable**: ícono propio, pantalla compl
   `apertura ves:18500 usdt:194 binance:320` o `gasto 3.40 almuerzo`.
 
 Los datos se guardan en el navegador (`localStorage`).
+
+## Changelog rápido
+
+- 2026-08-26: reportes avanzados/P2P, tasa USDT manual o automática (Google Sheets), «Ganancia hoy» automática al cierre, categorías personalizadas con desglose y resumen de búsqueda.
