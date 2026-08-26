@@ -31,6 +31,8 @@ npm run dev
 - **Buscador inteligente**: al escribir una palabra clave ves cuántas coincidencias hay en las descripciones y sus totales (ingresos/gastos/neto) sobre el listado filtrado.
 - Tendencia del neto **vs. mes anterior** (▲/▼ %) y recordatorio de cierre P2P.
 - **Respaldo JSON** (exportar/restaurar), **bloqueo con PIN** y **tema claro/oscuro** (sección Más).
+- **Desbloqueo con huella/rostro 👆** (WebAuthn): en *Más → Seguridad*, con PIN activo, activa la biometría del dispositivo (se guarda solo en ese dispositivo; el PIN queda de respaldo). Al abrir la app la pide automáticamente.
+- La nube **sincroniza en silencio al recargar** si nube y dispositivo coinciden (el modal "nube vs dispositivo" solo aparece cuando hay diferencias reales).
 - **Gastos fijos del mes** (celular, internet, alquiler, tarjeta…): con día de vencimiento y **alertas programables** (avisa X días antes; banner persistente en Home + notificación del navegador **hasta marcar pagado**). "Pagar" registra el gasto automáticamente y "des-marcar" lo revierte.
 - Botón en Home para **borrar los datos de ejemplo y empezar desde cero** (desaparece después del primer uso para evitar borrados accidentales).
 - **Reporte**: resumen del período exportable a **PDF** y **Excel (.xlsx)**.

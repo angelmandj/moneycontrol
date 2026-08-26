@@ -7,6 +7,7 @@ import { loadStore, saveStore, uid, inPeriod, weekOfMonth, resetData, toNum, mon
 import { parseTelegramCaption, readReceipt } from './ocr'
 import { exportPdf, exportXlsx } from './report'
 import { sheetCellCsvUrl, fetchSheetRate } from './sheetRate'
+import { loadBio, clearBio, bioSupported, bioRegister, bioVerify } from './bio'
 import { supabase, pushStore, pullStore } from './supabase'
 import type { Debt, Loan, Period, Recurring, Snapshot, Store, Template, Transaction } from './types'
 
@@ -18,6 +19,16 @@ const CAT_ICON: Record<string, string> = { P2P: '💱', Comida: '🍔', Transpor
 const catIcon = (c: string) => CAT_ICON[c] || '🏷️'
 /** Categoría efectiva: si eligió "Otros" y escribió un nombre, se usa ese nombre como categoría propia */
 const effCat = (sel: string, custom: string) => (sel === 'Otros' && custom.trim() ? custom.trim().replace(/\s+/g, ' ') : sel)
+/** Huella estable del contenido de un Store (para comparar nube vs dispositivo sin falsos conflictos) */
+function storeFingerprint(s: Store): string {
+  const norm = (o: any): any =>
+    Array.isArray(o)
+      ? o.map(norm)
+      : o && typeof o === 'object'
+        ? Object.keys(o).sort().reduce((acc: any, k) => { acc[k] = norm(o[k]); return acc }, {})
+        : o
+  return JSON.stringify(norm(s))
+}
 const DAYL = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
 
 /** Todo el dinero principal se muestra en USDT */
@@ -83,6 +94,9 @@ export default function App() {
   const [budgOpen, setBudgOpen] = useState(false)
   const [pinOpen, setPinOpen] = useState(false)
   const [unlocked, setUnlocked] = useState(false)
+  // --- Biometría (huella/rostro, por dispositivo) ---
+  const [bioOk, setBioOk] = useState(false)
+  const [bio, setBio] = useState(loadBio())
   const [ldTab, setLdTab] = useState<'owed' | 'owe'>('owed')
   const [toast, setToast] = useState('')
   // --- Reporte avanzado ---
@@ -152,6 +166,37 @@ export default function App() {
     if (go === 'escanear') setTab('scan')
     else if (go === 'registrar') setTab('home')
   }, [])
+
+  // Biometría: detectar si el dispositivo tiene huella/rostro disponible
+  useEffect(() => {
+    void bioSupported().then(setBioOk)
+  }, [])
+
+  /** Intenta desbloquear con huella/rostro; devuelve true si pasó */
+  async function tryBioUnlock(): Promise<boolean> {
+    const ok = await bioVerify()
+    if (ok) {
+      setUnlocked(true)
+      ping('Bienvenido 👋')
+    }
+    return ok
+  }
+
+  async function enableBio() {
+    const c = await bioRegister()
+    if (c) {
+      setBio(c)
+      ping('Huella/rostro activada en este dispositivo 🔓')
+    } else {
+      ping('No se pudo registrar (cancelado o no compatible)')
+    }
+  }
+
+  function disableBio() {
+    clearBio()
+    setBio(null)
+    ping('Huella/rostro desactivada')
+  }
 
   // Sesión de Supabase: restaurar al cargar y reaccionar a login/logout
   useEffect(() => {
@@ -661,8 +706,11 @@ export default function App() {
         if (!err) ping('Tus datos ya están en la nube ☁️')
       } else {
         const st = coerceStore(remote.payload)
-        if (st) setCloudAsk({ remote: st, updatedAt: remote.updated_at })
-        else setSyncSt('saved')
+        if (!st) setSyncSt('saved')
+        // Solo preguntamos si hay DIFERENCIA real entre nube y dispositivo;
+        // si el contenido es el mismo (típico al recargar), sincronizamos en silencio
+        else if (storeFingerprint(st) === storeFingerprint(sRef.current)) setSyncSt('saved')
+        else setCloudAsk({ remote: st, updatedAt: remote.updated_at })
       }
     } catch (e: any) {
       setSyncSt('error')
@@ -807,7 +855,7 @@ export default function App() {
 
   // Bloqueo por PIN: todos los hooks ya se ejecutaron
   if (s.pinHash && !unlocked) {
-    return <LockScreen pinHash={s.pinHash} onOk={() => setUnlocked(true)} />
+    return <LockScreen pinHash={s.pinHash} hasBio={!!bio} onOk={() => setUnlocked(true)} onBio={tryBioUnlock} />
   }
 
   return (
@@ -1387,6 +1435,25 @@ export default function App() {
             <button style={{ ...btn, width: '100%' }} onClick={() => setPinOpen(true)}>
               {s.pinHash ? 'Quitar PIN' : 'Activar PIN'}
             </button>
+
+            {!!s.pinHash && bioOk && (
+              <div style={{ marginTop: 14, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+                <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+                  {bio
+                    ? '🔓 Huella/rostro activada en este dispositivo: entrarás sin escribir el PIN.'
+                    : '👆 Usa tu huella o rostro para entrar rápido (el PIN queda de respaldo). Es solo en este dispositivo.'}
+                </p>
+                {bio ? (
+                  <button style={{ ...btn, width: '100%', background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)' }} onClick={disableBio}>
+                    Desactivar huella/rostro
+                  </button>
+                ) : (
+                  <button style={{ ...btn, width: '100%', background: 'rgba(62,224,167,.15)', color: 'var(--green)', border: '1px solid rgba(62,224,167,.3)' }} onClick={enableBio}>
+                    🔓 Activar huella/rostro
+                  </button>
+                )}
+              </div>
+            )}
           </Card>
         </>
       )}
@@ -1880,6 +1947,7 @@ export default function App() {
                 delete n.pinHash
                 return n
               })
+              if (bio) disableBio() // la biometría necesita el PIN de respaldo
               setPinOpen(false)
               ping('PIN desactivado')
             }}
@@ -2175,19 +2243,31 @@ function PinForm({ hasPin, pinHash, onSet, onRemove }: {
   )
 }
 
-function LockScreen({ pinHash, onOk }: { pinHash: string; onOk: () => void }) {
+function LockScreen({ pinHash, hasBio, onOk, onBio }: { pinHash: string; hasBio: boolean; onOk: () => void; onBio?: () => Promise<boolean> }) {
   const [pin, setPin] = useState('')
   const [err, setErr] = useState(false)
+  const [bioBusy, setBioBusy] = useState(false)
+  const triedRef = useRef(false)
   const tryUnlock = async () => {
     if ((await hashPin(pin)) === pinHash) onOk()
     else { setErr(true); setPin('') }
   }
+  // Al abrir, intenta la huella/rostro automáticamente (una vez por carga)
+  useEffect(() => {
+    if (!hasBio || !onBio || triedRef.current) return
+    triedRef.current = true
+    setBioBusy(true)
+    void onBio().finally(() => setBioBusy(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
       <div style={{ ...card, width: '100%', maxWidth: 340, textAlign: 'center' }}>
-        <div style={{ fontSize: 34, marginBottom: 8 }}>🔒</div>
+        <div style={{ fontSize: 34, marginBottom: 8 }}>{bioBusy ? '🔓' : '🔒'}</div>
         <h1 style={{ fontSize: 20, fontWeight: 700 }}>MoneyControl</h1>
-        <p style={{ color: 'var(--muted)', fontSize: 13, margin: '6px 0 16px' }}>Ingresa tu PIN para continuar</p>
+        <p style={{ color: 'var(--muted)', fontSize: 13, margin: '6px 0 16px' }}>
+          {bioBusy ? 'Verificando tu huella/rostro…' : 'Ingresa tu PIN para continuar'}
+        </p>
         <input
           className="mono"
           type="password"
@@ -2201,6 +2281,15 @@ function LockScreen({ pinHash, onOk }: { pinHash: string; onOk: () => void }) {
         />
         {err && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>PIN incorrecto</p>}
         <button style={{ ...btn, width: '100%', marginTop: 14 }} onClick={tryUnlock}>Desbloquear</button>
+        {hasBio && onBio && (
+          <button
+            style={{ ...btn, width: '100%', marginTop: 10, background: 'var(--chip)', color: 'var(--text)', opacity: bioBusy ? 0.6 : 1 }}
+            disabled={bioBusy}
+            onClick={() => { setBioBusy(true); void onBio().finally(() => setBioBusy(false)) }}
+          >
+            {bioBusy ? '⏳ Verificando…' : '👆 Usar huella / rostro'}
+          </button>
+        )}
       </div>
     </div>
   )
