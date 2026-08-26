@@ -13,6 +13,10 @@ const CATS = ['P2P', 'Comida', 'Transporte', 'Servicios', 'Hogar', 'Salud', 'Oci
 const COLORS = ['#6ea8ff', '#3ee0a7', '#f5c46b', '#a78bfa', '#ff6b8a', '#67e8f9', '#fb923c', '#94a3b8', '#f472b6', '#c4b5fd']
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 const CAT_ICON: Record<string, string> = { P2P: '💱', Comida: '🍔', Transporte: '🛵', Servicios: '💡', Hogar: '🏠', Salud: '💊', Ocio: '🎮', Préstamos: '🤝', Deudas: '💳', Otros: '📦' }
+/** Ícono de categoría: los de la lista base tienen ícono propio; las personalizadas usan 🏷️ */
+const catIcon = (c: string) => CAT_ICON[c] || '🏷️'
+/** Categoría efectiva: si eligió "Otros" y escribió un nombre, se usa ese nombre como categoría propia */
+const effCat = (sel: string, custom: string) => (sel === 'Otros' && custom.trim() ? custom.trim().replace(/\s+/g, ' ') : sel)
 const DAYL = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
 
 /** Todo el dinero principal se muestra en USDT */
@@ -169,6 +173,33 @@ export default function App() {
   }, [s, sbUser, cloudAsk])
 
   const now = new Date()
+
+  // --- Categorías personalizadas ---
+  /** Lista completa de categorías: base + las creadas por el usuario */
+  const allCats = useMemo(() => [...CATS, ...s.customCats.filter((c) => !CATS.includes(c))], [s.customCats])
+  /** Categorías del filtro: allCats + cualquier categoría histórica ya usada en movimientos */
+  const filterCats = useMemo(
+    () => [...allCats, ...[...new Set(s.txs.map((t) => t.category))].filter((c) => !allCats.includes(c))],
+    [allCats, s.txs],
+  )
+  /** Color estable por categoría (por posición en la lista; por hash si ya no está sugerida) */
+  const catColor = (c: string) => {
+    const i = allCats.indexOf(c)
+    if (i >= 0) return COLORS[i % COLORS.length]
+    let h = 0
+    for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+    return COLORS[h % COLORS.length]
+  }
+  const [catDrill, setCatDrill] = useState<string | null>(null)
+
+  /** Devuelve el patch para registrar una categoría personalizada nueva (dedupe sin importar mayúsculas) */
+  const regCat = (cat: string, p: Store): Partial<Store> => {
+    const c = cat.trim()
+    if (!c || CATS.includes(c)) return {}
+    if (p.customCats.some((x) => x.toLowerCase() === c.toLowerCase())) return {}
+    return { customCats: [...p.customCats, c] }
+  }
+
   const mes = MESES[now.getMonth()]
   const curKey = monthKey(now)
   const scopeLbl =
@@ -248,11 +279,15 @@ export default function App() {
   const prevNet = netIn(prevKey)
   const trendPct = prevNet !== 0 ? ((curNet - prevNet) / Math.abs(prevNet)) * 100 : null
 
-  const byCat = CATS.map((c, i) => ({
-    name: c,
-    value: txs.filter((t) => t.type === 'expense' && t.category === c).reduce((a, t) => a + t.amountUsd, 0),
-    color: COLORS[i],
-  })).filter((x) => x.value > 0)
+  // Totales por categoría: se derivan de los movimientos (incluye categorías personalizadas)
+  const byCat = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const t of txs) if (t.type === 'expense') map.set(t.category, (map.get(t.category) || 0) + t.amountUsd)
+    return [...map.entries()]
+      .map(([name, value]) => ({ name, value, color: catColor(name) }))
+      .sort((a, b) => b.value - a.value)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txs, allCats])
 
   // Presupuestos del mes en curso por categoría
   const budgRows = useMemo(() => {
@@ -261,11 +296,12 @@ export default function App() {
       if (t.type !== 'expense' || monthKey(new Date(t.date)) !== curKey) continue
       spent[t.category] = (spent[t.category] || 0) + t.amountUsd
     }
-    return CATS
+    const catSet = [...new Set([...allCats, ...Object.keys(s.budgets), ...Object.keys(spent)])]
+    return catSet
       .filter((c) => (s.budgets[c] || 0) > 0 || (spent[c] || 0) > 0)
       .map((c) => ({ c, spent: spent[c] || 0, budget: s.budgets[c] || 0 }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.txs, s.budgets])
+  }, [s.txs, s.budgets, allCats])
 
   const byDay = (() => {
     const map = new Map<string, { d: string; in: number; out: number }>()
@@ -322,14 +358,11 @@ export default function App() {
       d.setDate(t0.getDate() - off + i)
       return d
     })
-    const top = CATS
-      .map((c) => ({ c, v: txs.filter((t) => t.type === 'expense' && t.category === c).reduce((a, t) => a + t.amountUsd, 0) }))
-      .filter((x) => x.v > 0)
-      .sort((a, b) => b.v - a.v)
-      .slice(0, 4)
-      .map((x) => x.c)
+    const expByCat = new Map<string, number>()
+    for (const t of txs) if (t.type === 'expense') expByCat.set(t.category, (expByCat.get(t.category) || 0) + t.amountUsd)
+    const top = [...expByCat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([c]) => c)
     const totalExp = txs.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amountUsd, 0)
-    const topSum = txs.filter((t) => t.type === 'expense' && top.includes(t.category)).reduce((a, t) => a + t.amountUsd, 0)
+    const topSum = top.reduce((a, c) => a + (expByCat.get(c) || 0), 0)
     const cats = totalExp - topSum > 0.004 ? [...top, 'Otros+'] : top
     const rows = days.map((d, i) => {
       const row: Record<string, number | string> = { d: `${DAYL[i]} ${d.getDate()}` }
@@ -347,7 +380,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [txs])
 
-  const barColor = (c: string) => (c === 'Otros+' ? '#64748b' : COLORS[Math.max(0, CATS.indexOf(c)) % COLORS.length])
+  const barColor = (c: string) => (c === 'Otros+' ? '#64748b' : catColor(c))
 
   // Personas con las que has operado (filtro rápido)
   const persons = useMemo(
@@ -365,7 +398,7 @@ export default function App() {
   }, [s.txs, period, weekSel])
   const repInc = repTxs.filter((t) => t.type === 'income').reduce((a, t) => a + t.amountUsd, 0)
   const repExp = repTxs.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amountUsd, 0)
-  const repByCat = CATS.map((c) => ({
+  const repByCat = [...new Set(repTxs.filter((t) => t.type === 'expense').map((t) => t.category))].map((c) => ({
     name: c,
     value: repTxs.filter((t) => t.type === 'expense' && t.category === c).reduce((a, t) => a + t.amountUsd, 0),
   })).filter((x) => x.value > 0)
@@ -429,7 +462,7 @@ export default function App() {
       rateVes: s.rate, // guarda la tasa del momento
       ...partial,
     }
-    setS((p) => ({ ...p, txs: [tx, ...p.txs] }))
+    setS((p) => ({ ...p, ...regCat(tx.category, p), txs: [tx, ...p.txs] }))
     ping('Movimiento guardado')
   }
 
@@ -862,7 +895,7 @@ export default function App() {
               return (
                 <div key={r.c} style={{ marginBottom: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
-                    <span>{CAT_ICON[r.c] || '📦'} {r.c}</span>
+                    <span>{catIcon(r.c)} {r.c}</span>
                     <span className="mono" style={{ color: 'var(--muted)', fontSize: 12 }}>
                       {money(r.spent)}{r.budget > 0 ? ` / ${money(r.budget)}` : ' (sin presupuesto)'}
                     </span>
@@ -900,15 +933,16 @@ export default function App() {
                   {byCat.map((c) => {
                     const pct = exp > 0 ? (c.value / exp) * 100 : 0
                     return (
-                      <div key={c.name} style={{ marginBottom: 9 }}>
+                      <div key={c.name} style={{ marginBottom: 9, cursor: 'pointer' }} onClick={() => setCatDrill(c.name)} title="Ver desglose de movimientos">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 4 }}>
                           <span>
                             <i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 3, background: c.color, marginRight: 7 }} />
-                            {CAT_ICON[c.name] || '📦'} {c.name}
+                            {catIcon(c.name)} {c.name}
                           </span>
                           <span className="mono" style={{ whiteSpace: 'nowrap' }}>
                             {money(c.value)}
                             <span style={{ color: 'var(--muted)', fontSize: 11 }}> · {pct.toFixed(0)}%</span>
+                            <span style={{ color: 'var(--muted)', marginLeft: 6 }}>›</span>
                           </span>
                         </div>
                         <div style={{ height: 5, borderRadius: 99, background: 'var(--chip)', overflow: 'hidden' }}>
@@ -918,6 +952,7 @@ export default function App() {
                     )
                   })}
                 </div>
+                <p style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', marginTop: 2 }}>Toca una categoría para ver su desglose movimiento por movimiento</p>
               </>
             ) : (
               <p style={{ color: 'var(--muted)', fontSize: 13, padding: '22px 0', textAlign: 'center' }}>Sin gastos en el período</p>
@@ -955,6 +990,7 @@ export default function App() {
             rate={s.rate}
             onRate={(r) => setS((p) => ({ ...p, rate: r }))}
             templates={s.templates}
+            cats={allCats}
             onSaveTemplate={(t) => { setS((p) => ({ ...p, templates: [t, ...p.templates] })); ping('Plantilla guardada') }}
             onDelTemplate={(id) => setS((p) => ({ ...p, templates: p.templates.filter((t) => t.id !== id) }))}
           />
@@ -976,7 +1012,7 @@ export default function App() {
             ))}
             <select value={catF} onChange={(e) => setCatF(e.target.value)} style={{ ...chip(false), background: 'transparent', color: 'inherit' }}>
               <option value="all">Categorías</option>
-              {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+              {filterCats.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           {persons.length > 0 && (
@@ -992,10 +1028,24 @@ export default function App() {
             rate={s.rate}
             onRate={(r) => setS((p) => ({ ...p, rate: r }))}
             templates={s.templates}
+            cats={allCats}
             onSaveTemplate={(t) => { setS((p) => ({ ...p, templates: [t, ...p.templates] })); ping('Plantilla guardada') }}
             onDelTemplate={(id) => setS((p) => ({ ...p, templates: p.templates.filter((t) => t.id !== id) }))}
           />
-          {txs.length === 0 && <p style={{ color: 'var(--muted)', marginTop: 16, textAlign: 'center' }}>Sin movimientos en este período</p>}
+          {q.trim() !== '' && (
+            <div style={{ ...card, marginTop: 12, padding: '12px 14px', borderLeft: '3px solid var(--accent)' }}>
+              <div style={{ fontSize: 13 }}>
+                🔎 <b>«{q.trim()}»</b> · {txs.length} coincidencia{txs.length === 1 ? '' : 's'}
+              </div>
+              <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12, color: 'var(--muted)', flexWrap: 'wrap' }}>
+                <span>Ingresos <b className="mono" style={{ color: 'var(--green)' }}>+{money(inc)}</b></span>
+                <span>Gastos <b className="mono" style={{ color: 'var(--red)' }}>−{money(exp)}</b></span>
+                <span>Neto <b className="mono" style={{ color: inc - exp >= 0 ? 'var(--green)' : 'var(--red)' }}>{money(inc - exp)}</b></span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Abajo tienes el listado con la descripción de cada coincidencia — toca ✏️ para editarla.</div>
+            </div>
+          )}
+          {txs.length === 0 && <p style={{ color: 'var(--muted)', marginTop: 16, textAlign: 'center' }}>{q.trim() ? `Sin coincidencias para «${q.trim()}» en este alcance` : 'Sin movimientos en este período'}</p>}
           {txs.map((t) => (
             <TxRow key={t.id} t={t} bal={balMap.get(t.id)} onEdit={() => setEditTx(t)} onDel={() => delTx(t.id)} />
           ))}
@@ -1058,6 +1108,7 @@ export default function App() {
         review ? (
           <ReviewForm
             r={review}
+            cats={allCats}
             rate={s.rate}
             onCancel={() => setReview(null)}
             onSave={(partial, newRate) => {
@@ -1152,6 +1203,32 @@ export default function App() {
                   <button style={{ ...btn, whiteSpace: 'nowrap' }} onClick={sendMagic}>✈️ Entrar</button>
                 </div>
               </>
+            )}
+          </Card>
+
+          <Card title="🏷️ Tus categorías">
+            {s.customCats.length > 0 ? (
+              <>
+                <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+                  Se crean al registrar eligiendo «Otros» + un nombre. Quitarlas de aquí solo las saca de las sugerencias: los movimientos conservan su nombre y sus totales.
+                </p>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {s.customCats.map((c) => (
+                    <span key={c} style={{ ...chip(false), display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }} onClick={() => { setCatF(c); setTypeF('all'); setTab('tx') }} title="Ver sus movimientos">
+                      🏷️ {c}
+                      <span
+                        style={{ color: 'var(--muted)', marginLeft: 2 }}
+                        title="Quitar de las sugerencias"
+                        onClick={(e) => { e.stopPropagation(); setS((p) => ({ ...p, customCats: p.customCats.filter((x) => x !== c) })) }}
+                      >✕</span>
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+                Aún no tienes categorías propias. En «Registrar» elige la categoría <b style={{ color: 'var(--text)' }}>Otros</b> y escribe el nombre exacto del gasto (ej. <i>Trabajadores</i>, <i>Medicinas abuela</i>): se crea aquí y todo lo relacionado queda agrupado con su total en Inicio, filtros, presupuestos y reportes.
+              </p>
             )}
           </Card>
 
@@ -1291,7 +1368,7 @@ export default function App() {
             )}
           </div>
 
-          <BillForm onSave={(b) => { setS((p) => ({ ...p, recurring: [b, ...p.recurring] })); ping('Gasto fijo agregado') }} />
+          <BillForm cats={allCats} onSave={(b) => { setS((p) => ({ ...p, ...regCat(b.category, p), recurring: [b, ...p.recurring] })); ping('Gasto fijo agregado') }} />
 
           {s.recurring.length === 0 && <p style={{ color: 'var(--muted)', marginTop: 16, textAlign: 'center' }}>Sin gastos fijos. Agrega celular, internet, alquiler…</p>}
           {[...s.recurring]
@@ -1482,6 +1559,7 @@ export default function App() {
         <Modal title={`Presupuestos mensuales (USDT)`} onClose={() => setBudgOpen(false)}>
           <BudgetForm
             initial={s.budgets}
+            cats={allCats}
             onSave={(b) => {
               setS((p) => ({ ...p, budgets: b }))
               setBudgOpen(false)
@@ -1491,13 +1569,40 @@ export default function App() {
         </Modal>
       )}
 
+      {catDrill && (() => {
+        const list = txs.filter((t) => t.type === 'expense' && t.category === catDrill)
+        const tot = list.reduce((a, t) => a + t.amountUsd, 0)
+        return (
+          <Modal title={`${catIcon(catDrill)} ${catDrill}`} onClose={() => setCatDrill(null)}>
+            <div style={{ textAlign: 'center', marginBottom: 12 }}>
+              <div className="mono" style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1 }}>{money(tot)}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                {scopeLbl} · {list.length} movimiento{list.length === 1 ? '' : 's'} · {exp > 0 ? ((tot / exp) * 100).toFixed(0) : 0}% de tus gastos
+              </div>
+              <div className="mono" style={{ fontSize: 12, color: 'var(--gold)', marginTop: 2 }}>≈ {ves(tot * s.rate)} @tasa {s.rate}</div>
+            </div>
+            <div style={{ maxHeight: '46vh', overflowY: 'auto' }}>
+              {list.map((t) => (
+                <TxRow key={t.id} t={t} bal={balMap.get(t.id)} onEdit={() => { setCatDrill(null); setEditTx(t) }} onDel={() => { setCatDrill(null); delTx(t.id) }} />
+              ))}
+              {list.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', padding: '18px 0' }}>Sin movimientos de esta categoría en este alcance</p>}
+            </div>
+            <button
+              style={{ ...btn, width: '100%', marginTop: 10, background: 'var(--chip)', color: 'var(--text)' }}
+              onClick={() => { setCatF(catDrill); setTypeF('expense'); setCatDrill(null); setTab('tx') }}
+            >Ver en Movimientos →</button>
+          </Modal>
+        )
+      })()}
+
       {editTx && (
         <Modal title="Editar movimiento" onClose={() => setEditTx(null)}>
           <EditTxForm
             tx={editTx}
             rate={s.rate}
+            cats={allCats.includes(editTx.category) ? allCats : [...allCats, editTx.category]}
             onSave={(t) => {
-              setS((p) => ({ ...p, txs: p.txs.map((x) => (x.id === t.id ? t : x)) }))
+              setS((p) => ({ ...p, ...regCat(t.category, p), txs: p.txs.map((x) => (x.id === t.id ? t : x)) }))
               setEditTx(null)
               ping('Movimiento actualizado')
             }}
@@ -1592,7 +1697,7 @@ function TxRow({ t, bal, onEdit, onDel }: { t: Transaction; bal?: number; onEdit
           width: 42, height: 42, borderRadius: 14, flexShrink: 0, fontSize: 18, display: 'grid', placeItems: 'center',
           background: t.type === 'income' ? 'rgba(62,224,167,.12)' : 'rgba(255,107,138,.12)',
         }}>
-          {CAT_ICON[t.category] || '📦'}
+          {catIcon(t.category)}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.note || t.category}</div>
@@ -1668,16 +1773,47 @@ function GoalForm({ initial, onSave }: { initial: number; onSave: (v: number) =>
   )
 }
 
-function BudgetForm({ initial, onSave }: { initial: Record<string, number>; onSave: (b: Record<string, number>) => void }) {
+/** Selector de categoría con opción de crear una personalizada al elegir "Otros" */
+function CatSelect({ cats, value, custom, onValue, onCustom }: {
+  cats: string[]
+  value: string
+  custom: string
+  onValue: (v: string) => void
+  onCustom: (v: string) => void
+}) {
+  return (
+    <div>
+      <select value={value} onChange={(e) => { onValue(e.target.value); if (e.target.value !== 'Otros') onCustom('') }} style={input}>
+        {cats.map((c) => <option key={c}>{c}</option>)}
+      </select>
+      {value === 'Otros' && (
+        <>
+          <input
+            placeholder="✏️ Ponle nombre: Trabajadores, Medicinas abuela…"
+            value={custom}
+            onChange={(e) => onCustom(e.target.value)}
+            style={{ ...input, marginTop: 6, borderColor: custom.trim() ? 'var(--accent)' : 'var(--line)' }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+            Se creará tu propia categoría «{custom.trim() || '…'}» y todo lo que gastes en ella quedará agrupado con su total.
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function BudgetForm({ initial, cats, onSave }: { initial: Record<string, number>; cats: string[]; onSave: (b: Record<string, number>) => void }) {
+  const catSet = [...new Set([...cats, ...Object.keys(initial)])]
   const [vals, setVals] = useState<Record<string, string>>(
-    Object.fromEntries(CATS.map((c) => [c, initial[c] ? String(initial[c]) : ''])),
+    Object.fromEntries(catSet.map((c) => [c, initial[c] ? String(initial[c]) : ''])),
   )
   return (
     <>
-      <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>Deja en blanco (o 0) las categorías sin presupuesto.</p>
-      {CATS.map((c) => (
+      <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>Deja en blanco (o 0) las categorías sin presupuesto. Incluye tus categorías personalizadas.</p>
+      {catSet.map((c) => (
         <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <span style={{ flex: 1, fontSize: 14 }}>{CAT_ICON[c] || '📦'} {c}</span>
+          <span style={{ flex: 1, fontSize: 14 }}>{catIcon(c)} {c}</span>
           <input
             className="mono"
             inputMode="decimal"
@@ -1690,7 +1826,7 @@ function BudgetForm({ initial, onSave }: { initial: Record<string, number>; onSa
       ))}
       <button style={{ ...btn, width: '100%', marginTop: 6 }} onClick={() => {
         const out: Record<string, number> = {}
-        for (const c of CATS) {
+        for (const c of catSet) {
           const v = toNum(vals[c] || '0')
           if (v > 0) out[c] = v
         }
@@ -1700,11 +1836,12 @@ function BudgetForm({ initial, onSave }: { initial: Record<string, number>; onSa
   )
 }
 
-function EditTxForm({ tx, rate, onSave }: { tx: Transaction; rate: number; onSave: (t: Transaction) => void }) {
+function EditTxForm({ tx, rate, cats, onSave }: { tx: Transaction; rate: number; cats: string[]; onSave: (t: Transaction) => void }) {
   const [kind, setKind] = useState<'income' | 'expense'>(tx.type === 'income' ? 'income' : 'expense')
   const [amt, setAmt] = useState(String(tx.amountUsd))
   const [rateStr, setRateStr] = useState(String(tx.rateVes || rate))
-  const [cat, setCat] = useState(tx.category)
+  const [cat, setCat] = useState(cats.includes(tx.category) ? tx.category : 'Otros')
+  const [customCat, setCustomCat] = useState(cats.includes(tx.category) ? '' : tx.category)
   const [note, setNote] = useState(tx.note)
   const [person, setPerson] = useState(tx.person || '')
   const n = toNum(amt)
@@ -1723,9 +1860,7 @@ function EditTxForm({ tx, rate, onSave }: { tx: Transaction; rate: number; onSav
         <div className="mono" style={{ fontSize: 12, color: 'var(--gold)', marginTop: 6 }}>≈ {ves(n * rr)} @{rr}</div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-        <select value={cat} onChange={(e) => setCat(e.target.value)} style={input}>
-          {CATS.map((c) => <option key={c}>{c}</option>)}
-        </select>
+        <CatSelect cats={cats} value={cat} custom={customCat} onValue={setCat} onCustom={setCustomCat} />
         <input placeholder="Persona (opcional)" value={person} onChange={(e) => setPerson(e.target.value)} style={input} />
       </div>
       <input placeholder="Nota" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...input, marginTop: 8 }} />
@@ -1736,7 +1871,7 @@ function EditTxForm({ tx, rate, onSave }: { tx: Transaction; rate: number; onSav
           amountUsd: n,
           rateVes: rr || undefined,
           amountVes: rr ? +(n * rr).toFixed(2) : undefined,
-          category: cat,
+          category: effCat(cat, customCat),
           note,
           person: person || undefined,
         })
@@ -1819,9 +1954,10 @@ function LockScreen({ pinHash, onOk }: { pinHash: string; onOk: () => void }) {
 }
 
 /** Confirmación de factura escaneada: convierte Bs → USDT preguntando el precio actual */
-function ReviewForm({ r, rate, onSave, onCancel }: {
+function ReviewForm({ r, rate, cats, onSave, onCancel }: {
   r: Review
   rate: number
+  cats: string[]
   onSave: (t: Partial<Transaction> & { type: Transaction['type']; amountUsd: number }, rate: number) => void
   onCancel: () => void
 }) {
@@ -1829,7 +1965,8 @@ function ReviewForm({ r, rate, onSave, onCancel }: {
   const [amt, setAmt] = useState(String(r.amount))
   const [curr, setCurr] = useState<'VES' | 'USD'>(guessVes ? 'VES' : 'USD')
   const [rateStr, setRateStr] = useState(String(rate))
-  const [cat, setCat] = useState(CATS.includes(r.category) ? r.category : 'Otros')
+  const [cat, setCat] = useState(cats.includes(r.category) ? r.category : 'Otros')
+  const [customCat, setCustomCat] = useState(cats.includes(r.category) ? '' : (r.category && r.category !== 'Otros' ? r.category : ''))
   const [kind, setKind] = useState<'income' | 'expense'>(r.isIncome ? 'income' : 'expense')
   const [note, setNote] = useState(r.text.split('\n').filter(Boolean).slice(0, 2).join(' · ').slice(0, 80))
   const n = toNum(amt)
@@ -1872,9 +2009,7 @@ function ReviewForm({ r, rate, onSave, onCancel }: {
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-        <select value={cat} onChange={(e) => setCat(e.target.value)} style={input}>
-          {CATS.map((c) => <option key={c}>{c}</option>)}
-        </select>
+        <CatSelect cats={cats} value={cat} custom={customCat} onValue={setCat} onCustom={setCustomCat} />
         <input placeholder="Nota" value={note} onChange={(e) => setNote(e.target.value)} style={input} />
       </div>
 
@@ -1885,7 +2020,7 @@ function ReviewForm({ r, rate, onSave, onCancel }: {
             amountUsd: +usdtEq.toFixed(4),
             amountVes: +vesEq.toFixed(2),
             rateVes: rr,
-            category: cat,
+            category: effCat(cat, customCat),
             note,
             source: 'ocr',
             receipt: r.url,
@@ -1922,11 +2057,12 @@ function Card({ title, action, children }: { title: string; action?: { label: st
   )
 }
 
-function QuickAdd({ onAdd, rate, onRate, templates, onSaveTemplate, onDelTemplate }: {
+function QuickAdd({ onAdd, rate, onRate, templates, cats, onSaveTemplate, onDelTemplate }: {
   onAdd: (t: any) => void
   rate: number
   onRate: (r: number) => void
   templates: Template[]
+  cats: string[]
   onSaveTemplate: (t: Template) => void
   onDelTemplate: (id: string) => void
 }) {
@@ -1934,6 +2070,7 @@ function QuickAdd({ onAdd, rate, onRate, templates, onSaveTemplate, onDelTemplat
   const [note, setNote] = useState('')
   const [person, setPerson] = useState('')
   const [cat, setCat] = useState('P2P')
+  const [customCat, setCustomCat] = useState('')
   const [kind, setKind] = useState<'income' | 'expense'>('income')
   const [curr, setCurr] = useState<'USD' | 'VES'>('USD')
   const [rateStr, setRateStr] = useState(String(rate))
@@ -1953,7 +2090,8 @@ function QuickAdd({ onAdd, rate, onRate, templates, onSaveTemplate, onDelTemplat
                 setKind(t.type === 'income' ? 'income' : 'expense')
                 setCurr('USD')
                 setAmt(String(t.amountUsd))
-                setCat(t.category)
+                setCat(cats.includes(t.category) ? t.category : 'Otros')
+                setCustomCat(cats.includes(t.category) ? '' : t.category)
                 setNote(t.note)
                 setPerson(t.person || '')
               }}
@@ -1977,9 +2115,7 @@ function QuickAdd({ onAdd, rate, onRate, templates, onSaveTemplate, onDelTemplat
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <input className="mono" placeholder={curr === 'VES' ? 'Monto (Bs)' : 'Monto USDT'} value={amt} onChange={(e) => setAmt(e.target.value)} style={input} />
-        <select value={cat} onChange={(e) => setCat(e.target.value)} style={input}>
-          {CATS.map((c) => <option key={c}>{c}</option>)}
-        </select>
+        <CatSelect cats={cats} value={cat} custom={customCat} onValue={setCat} onCustom={setCustomCat} />
       </div>
       {curr === 'VES' && (
         <>
@@ -2006,17 +2142,17 @@ function QuickAdd({ onAdd, rate, onRate, templates, onSaveTemplate, onDelTemplat
             amountUsd: curr === 'VES' ? +(n / rr).toFixed(4) : n,
             amountVes: curr === 'VES' ? n : +(n * (rr || rate)).toFixed(2),
             rateVes: curr === 'VES' ? rr : rate,
-            category: cat,
+            category: effCat(cat, customCat),
             note,
             person: person || undefined,
           })
-          setAmt(''); setNote(''); setPerson('')
+          setAmt(''); setNote(''); setPerson(''); setCustomCat('')
         }}>Añadir {curr === 'VES' ? 'en Bs → USDT' : 'en USDT'}</button>
         <button
           title="Guardar como plantilla frecuente"
           style={{ ...btn, background: 'transparent', border: '1px solid var(--line)', color: 'var(--gold)', opacity: n > 0 ? 1 : 0.4 }}
           disabled={!(n > 0)}
-          onClick={() => onSaveTemplate({ id: uid(), type: kind, amountUsd: +usdNow.toFixed(4), category: cat, note, person: person || undefined })}
+          onClick={() => onSaveTemplate({ id: uid(), type: kind, amountUsd: +usdNow.toFixed(4), category: effCat(cat, customCat), note, person: person || undefined })}
         >☆</button>
       </div>
     </div>
@@ -2090,11 +2226,12 @@ function DebtForm({ onSave }: { onSave: (d: Debt) => void }) {
   )
 }
 
-function BillForm({ onSave }: { onSave: (b: Recurring) => void }) {
+function BillForm({ onSave, cats }: { onSave: (b: Recurring) => void; cats: string[] }) {
   const [name, setName] = useState('')
   const [amt, setAmt] = useState('')
   const [day, setDay] = useState('5')
   const [cat, setCat] = useState('Servicios')
+  const [customCat, setCustomCat] = useState('')
   const [daysBefore, setDaysBefore] = useState(2)
   const [remind, setRemind] = useState(true)
   const ok = name.trim() && toNum(amt) > 0 && toNum(day) >= 1 && toNum(day) <= 31
@@ -2106,9 +2243,7 @@ function BillForm({ onSave }: { onSave: (b: Recurring) => void }) {
         <input className="mono" inputMode="numeric" min={1} max={31} placeholder="Día de vencimiento (1–31)" value={day} onChange={(e) => setDay(e.target.value)} style={input} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-        <select value={cat} onChange={(e) => setCat(e.target.value)} style={input}>
-          {CATS.map((c) => <option key={c}>{c}</option>)}
-        </select>
+        <CatSelect cats={cats} value={cat} custom={customCat} onValue={setCat} onCustom={setCustomCat} />
         <div style={{ ...input, display: 'flex', alignItems: 'center', gap: 8 }}>
           <button style={stepBtn} onClick={() => setDaysBefore((d) => Math.max(0, d - 1))}>−</button>
           <span className="mono" style={{ flex: 1, textAlign: 'center', fontSize: 13 }}>{daysBefore === 0 ? 'ese día' : `${daysBefore}d antes`}</span>
@@ -2127,13 +2262,13 @@ function BillForm({ onSave }: { onSave: (b: Recurring) => void }) {
           name: name.trim(),
           amountUsd: toNum(amt),
           dayOfMonth: Math.min(31, Math.max(1, Math.round(toNum(day)))),
-          category: cat,
+          category: effCat(cat, customCat),
           note: '',
           remind,
           remindDaysBefore: daysBefore,
           paidMonths: {},
         })
-        setName(''); setAmt('')
+        setName(''); setAmt(''); setCustomCat('')
       }}>📅 Agregar gasto fijo</button>
     </div>
   )

@@ -23,6 +23,9 @@ npm run dev
 - Meta de gasto diario y **presupuestos mensuales por categoría**, ambos con barras de progreso.
 - **Conciliación P2P**: compara tu saldo real (snapshot) contra el esperado (snapshot previo + movimientos) y avisa diferencias.
 - **Plantillas** de movimientos frecuentes (⭐) y **filtro por persona**.
+- **Categorías personalizadas** 🏷️: al registrar, elige «Otros» y escribe el nombre exacto del gasto (Trabajadores, Medicinas abuela…). Se crea tu categoría, se agrupa con su total en Inicio, filtros, presupuestos y reportes, y se administra desde *Más → Tus categorías*.
+- **Desglose por categoría**: toca cualquier categoría del gráfico «Gastos por categoría» para ver su total y el listado movimiento por movimiento (con edición/eliminación directa).
+- **Buscador inteligente**: al escribir una palabra clave ves cuántas coincidencias hay en las descripciones y sus totales (ingresos/gastos/neto) sobre el listado filtrado.
 - Tendencia del neto **vs. mes anterior** (▲/▼ %) y recordatorio de cierre P2P.
 - **Respaldo JSON** (exportar/restaurar), **bloqueo con PIN** y **tema claro/oscuro** (sección Más).
 - **Gastos fijos del mes** (celular, internet, alquiler, tarjeta…): con día de vencimiento y **alertas programables** (avisa X días antes; banner persistente en Home + notificación del navegador **hasta marcar pagado**). "Pagar" registra el gasto automáticamente y "des-marcar" lo revierte.

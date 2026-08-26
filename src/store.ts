@@ -14,6 +14,7 @@ const seed = (): Store => {
     dailyGoal: 0,
     budgets: { Comida: 40, Transporte: 15 },
     templates: [],
+    customCats: [],
     theme: 'dark',
     didReset: false,
     telegram: { token: '', chatId: '', lastUpdate: 0 },
@@ -63,6 +64,7 @@ export function coerceStore(raw: any): Store | null {
   const merged = { ...seed(), ...raw }
   if (!Array.isArray(raw.debts)) merged.debts = []
   if (!Array.isArray(raw.recurring)) merged.recurring = []
+  if (!Array.isArray(raw.customCats)) merged.customCats = []
   return merged
 }
 

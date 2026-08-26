@@ -96,6 +96,8 @@ export interface Store {
   /** Plantillas de movimientos frecuentes */
   templates: Template[]
   theme: Theme
+  /** Categorías personalizadas creadas por el usuario (se suman a las base al elegir "Otros" + nombre) */
+  customCats: string[]
   /** Hash SHA-256 del PIN de bloqueo (vacío = sin bloqueo) */
   pinHash?: string
   /** Ya usó "empezar desde cero": oculta el botón del Home para evitar borrados accidentales */
