@@ -2,6 +2,10 @@
 
 PWA móvil para control de microingresos P2P, gastos, préstamos y snapshots diarios (Bs / USDT / Binance).
 
+## 🌐 App en vivo
+
+**https://angelmandj.github.io/moneycontrol/** — PWA instalable (Android: *Instalar app* · iPhone: *Compartir → Añadir a pantalla de inicio*). Cada push a `main` o `arena/01a03953-moneycontrol` redespliega solo vía GitHub Actions (`.github/workflows/deploy.yml`).
+
 ## Uso
 
 ```bash
@@ -35,11 +39,11 @@ El build de producción es una **PWA instalable**: ícono propio, pantalla compl
    npm run build
    npm run preview   # http://localhost:4173
    ```
-2. Ábrela en tu teléfono por HTTPS (URL desplegada) y:
+2. Ábrela en tu teléfono: **https://angelmandj.github.io/moneycontrol/** (HTTPS) y:
    - **Android (Chrome)**: Menú ⋮ → **Instalar app** / **Añadir a pantalla de inicio**. También aparece el botón **📲 Instalar como app** en la pestaña *Más*.
    - **iPhone (Safari)**: Compartir → **Añadir a pantalla de inicio**.
 
-> Para instalarla desde tu teléfono necesitas una **URL fija en HTTPS** (por ejemplo desplegando gratis en Vercel/Netlify). Los datos son los mismos en todos los dispositivos gracias a la nube de Supabase.
+> Los datos son los mismos en todos los dispositivos gracias a la nube de Supabase. Las actualizaciones llegan solas: al abrir la app instalada, el service worker toma la versión nueva publicada.
 
 ## Sincronización en la nube (Supabase)
 
