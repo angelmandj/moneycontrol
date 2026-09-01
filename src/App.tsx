@@ -3,7 +3,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { loadStore, saveStore, uid, inPeriod, weekOfMonth, resetData, toNum, monthKey, hashPin, coerceStore } from './store'
+import { loadStore, saveStore, uid, inPeriod, weekOfMonth, resetData, toNum, monthKey, hashPin, coerceStore, localDay, isoOnDay, withDay, fmtDay, dayGain, syncDayGain } from './store'
 import { parseTelegramCaption, readReceipt } from './ocr'
 import { exportPdf, exportXlsx } from './report'
 import { sheetCellCsvUrl, fetchSheetRate } from './sheetRate'
@@ -89,6 +89,7 @@ export default function App() {
   const [exporting, setExporting] = useState<'' | 'pdf' | 'xlsx'>('')
   const [review, setReview] = useState<Review | null>(null)
   const [editTx, setEditTx] = useState<Transaction | null>(null)
+  const [editSnap, setEditSnap] = useState<Snapshot | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [goalOpen, setGoalOpen] = useState(false)
   const [budgOpen, setBudgOpen] = useState(false)
@@ -361,7 +362,7 @@ export default function App() {
   const byDay = (() => {
     const map = new Map<string, { d: string; in: number; out: number }>()
     for (const t of txs) {
-      const k = t.date.slice(0, 10)
+      const k = localDay(t.date) // día local: un movimiento de las 9pm no salta al día siguiente
       const row = map.get(k) || { d: k.slice(5), in: 0, out: 0 }
       if (t.type === 'income') row.in += t.amountUsd
       else if (t.type === 'expense') row.out += t.amountUsd
@@ -575,7 +576,8 @@ export default function App() {
       ...partial,
     }
     setS((p) => ({ ...p, ...regCat(tx.category, p), txs: [tx, ...p.txs] }))
-    ping('Movimiento guardado')
+    const backdated = localDay(tx.date) !== localDay(new Date())
+    ping(backdated ? `Movimiento guardado · 📅 ${fmtDay(localDay(tx.date))}` : 'Movimiento guardado')
   }
 
   function delTx(id: string) {
@@ -589,42 +591,50 @@ export default function App() {
     })
   }
 
-  /** Guarda un snapshot; al registrar el CIERRE crea/actualiza automáticamente "Ganancia hoy" (cierre − apertura del día) */
+  /** Guarda un snapshot y recalcula la «Ganancia hoy» de ese día (cierre − apertura) */
   function saveSnap(sn: Snapshot, rate: number) {
-    const day = sn.date.slice(0, 10)
-    const open = sn.session === 'close'
-      ? [...s.snaps, sn].filter((x) => x.session === 'open' && x.date.slice(0, 10) === day).sort((a, b) => +new Date(b.date) - +new Date(a.date))[0]
-      : undefined
-    const profit = open ? (sn.vesInUsdt + sn.binanceUsdt) - (open.vesInUsdt + open.binanceUsdt) : null
+    const day = localDay(sn.date)
+    const snaps = [sn, ...s.snaps]
+    const g = dayGain(snaps, day)
+    setS((p) => ({ ...p, rate, snaps: [sn, ...p.snaps], txs: syncDayGain([sn, ...p.snaps], p.txs, day, rate) }))
+    ping(g
+      ? `${sn.session === 'open' ? 'Apertura' : 'Cierre'} guardado · 💰 Ganancia ${g.net >= 0 ? '+' : '−'}${money(Math.abs(g.net))}`
+      : `Snapshot guardado · tasa ${rate} Bs`)
+  }
 
+  /** Edita montos/tasa/fecha/tipo de una apertura o cierre y recalcula la ganancia de los días afectados */
+  function updateSnap(next: Snapshot, rate: number) {
+    const prev = s.snaps.find((x) => x.id === next.id)
+    const before = prev ? localDay(prev.date) : null
+    const after = localDay(next.date)
+    const g = dayGain(s.snaps.map((x) => (x.id === next.id ? next : x)), after)
     setS((p) => {
-      const snaps = [sn, ...p.snaps]
-      let txs = p.txs
-      if (sn.session === 'close' && open) {
-        // Reemplaza la ganancia automática de ese día (id estable por fecha)
-        const gainDay = open.date.slice(0, 10)
-        txs = txs.filter((t) => t.id !== `gain-${gainDay}`)
-        const net = +profit!.toFixed(4)
-        if (Math.abs(net) > 0.0001) {
-          txs = [{
-            id: `gain-${gainDay}`,
-            type: net >= 0 ? 'income' : 'expense',
-            amountUsd: Math.abs(net),
-            category: 'P2P',
-            note: 'Ganancia hoy',
-            date: sn.date,
-            source: 'p2p',
-            rateVes: rate,
-          }, ...txs]
-        }
-      }
+      const snaps = p.snaps.map((x) => (x.id === next.id ? next : x))
+      let txs = syncDayGain(snaps, p.txs, after, rate)
+      if (before && before !== after) txs = syncDayGain(snaps, txs, before, rate) // limpia el día anterior si cambió la fecha
       return { ...p, rate, snaps, txs }
     })
-    if (profit !== null) {
-      ping(`Cierre guardado · 💰 Ganancia hoy: ${profit >= 0 ? '+' : '−'}${money(Math.abs(profit))}`)
-    } else {
-      ping(`Snapshot guardado · tasa ${rate} Bs`)
-    }
+    ping(g
+      ? `${next.session === 'open' ? 'Apertura' : 'Cierre'} actualizado · 💰 Ganancia ${g.net >= 0 ? '+' : '−'}${money(Math.abs(g.net))}`
+      : `${next.session === 'open' ? 'Apertura' : 'Cierre'} actualizado`)
+  }
+
+  /** Elimina un snapshot (con confirmación) y recalcula la ganancia de su día */
+  function delSnap(id: string) {
+    const sn = s.snaps.find((x) => x.id === id)
+    if (!sn) return
+    setConfirm({
+      title: sn.session === 'open' ? '🌅 Eliminar apertura' : '🌙 Eliminar cierre',
+      msg: `¿Eliminar este snapshot del ${new Date(sn.date).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}? Se recalculará la «Ganancia hoy» de ese día. Esta acción no se puede deshacer.`,
+      onYes: () => {
+        const day = localDay(sn.date)
+        setS((p) => {
+          const snaps = p.snaps.filter((x) => x.id !== id)
+          return { ...p, snaps, txs: syncDayGain(snaps, p.txs, day, p.rate) }
+        })
+        ping('Snapshot eliminado')
+      },
+    })
   }
 
   function startFromZero() {
@@ -1245,9 +1255,9 @@ export default function App() {
           )}
           {s.snaps.length === 0 && <p style={{ color: 'var(--muted)', marginTop: 16, textAlign: 'center' }}>Aún no hay snapshots</p>}
           {[...s.snaps].sort((a, b) => +new Date(b.date) - +new Date(a.date)).map((sn) => {
-            const day = sn.date.slice(0, 10)
+            const day = localDay(sn.date)
             const openSn = sn.session === 'close'
-              ? s.snaps.filter((x) => x.session === 'open' && x.date.slice(0, 10) === day).sort((a, b) => +new Date(b.date) - +new Date(a.date))[0]
+              ? s.snaps.filter((x) => x.session === 'open' && localDay(x.date) === day).sort((a, b) => +new Date(b.date) - +new Date(a.date))[0]
               : undefined
             const gain = openSn ? (sn.vesInUsdt + sn.binanceUsdt) - (openSn.vesInUsdt + openSn.binanceUsdt) : null
             return (
@@ -1255,7 +1265,7 @@ export default function App() {
                 <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(110,168,255,.1)', display: 'grid', placeItems: 'center', fontSize: 18 }}>
                   {sn.session === 'open' ? '🌅' : '🌙'}
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <b>{sn.session === 'open' ? 'Apertura' : 'Cierre'}</b>
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                     {new Date(sn.date).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}{sn.rate ? ` · tasa ${sn.rate} Bs` : ''}
@@ -1269,6 +1279,10 @@ export default function App() {
                       💰 Ganancia {gain >= 0 ? '+' : '−'}{money(Math.abs(gain))}
                     </div>
                   )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                  <button style={editBtn} title="Editar montos" onClick={() => setEditSnap(sn)}>✏️</button>
+                  <button style={delBtn} title="Eliminar" onClick={() => delSnap(sn.id)}>✕</button>
                 </div>
               </div>
             )
@@ -1924,8 +1938,21 @@ export default function App() {
             onSave={(t) => {
               setS((p) => ({ ...p, ...regCat(t.category, p), txs: p.txs.map((x) => (x.id === t.id ? t : x)) }))
               setEditTx(null)
-              ping('Movimiento actualizado')
+              const moved = localDay(t.date) !== localDay(editTx.date)
+              ping(moved ? `Movimiento actualizado · 📅 ${fmtDay(localDay(t.date))}` : 'Movimiento actualizado')
             }}
+          />
+        </Modal>
+      )}
+
+      {editSnap && (
+        <Modal title={editSnap.session === 'open' ? '🌅 Editar apertura' : '🌙 Editar cierre'} onClose={() => setEditSnap(null)}>
+          <SnapEditForm
+            snap={editSnap}
+            rate={s.rate}
+            onSave={(sn, r) => { updateSnap(sn, r); setEditSnap(null) }}
+            onCancel={() => setEditSnap(null)}
+            onDelete={() => { setEditSnap(null); delSnap(editSnap.id) }}
           />
         </Modal>
       )}
@@ -2165,6 +2192,7 @@ function EditTxForm({ tx, rate, cats, onSave }: { tx: Transaction; rate: number;
   const [customCat, setCustomCat] = useState(cats.includes(tx.category) ? '' : tx.category)
   const [note, setNote] = useState(tx.note)
   const [person, setPerson] = useState(tx.person || '')
+  const [day, setDay] = useState(localDay(tx.date))
   const n = toNum(amt)
   const rr = toNum(rateStr)
   return (
@@ -2185,6 +2213,9 @@ function EditTxForm({ tx, rate, cats, onSave }: { tx: Transaction; rate: number;
         <input placeholder="Persona (opcional)" value={person} onChange={(e) => setPerson(e.target.value)} style={input} />
       </div>
       <input placeholder="Nota" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...input, marginTop: 8 }} />
+      <label style={{ ...lbl, marginTop: 10 }}>Fecha del movimiento</label>
+      <input type="date" value={day} max={localDay(new Date())} onChange={(e) => e.target.value && setDay(e.target.value)} style={input} />
+      <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Se conserva la hora original; si lo registraste tarde, cámbiala al día real.</p>
       <button style={{ ...btn, width: '100%', marginTop: 12, opacity: n > 0 ? 1 : 0.5 }} disabled={!(n > 0)} onClick={() => {
         onSave({
           ...tx,
@@ -2195,6 +2226,7 @@ function EditTxForm({ tx, rate, cats, onSave }: { tx: Transaction; rate: number;
           category: effCat(cat, customCat),
           note,
           person: person || undefined,
+          date: withDay(tx.date, day),
         })
       }}>Guardar cambios</button>
     </>
@@ -2311,6 +2343,7 @@ function ReviewForm({ r, rate, cats, onSave, onCancel }: {
   const [customCat, setCustomCat] = useState(cats.includes(r.category) ? '' : (r.category && r.category !== 'Otros' ? r.category : ''))
   const [kind, setKind] = useState<'income' | 'expense'>(r.isIncome ? 'income' : 'expense')
   const [note, setNote] = useState(r.text.split('\n').filter(Boolean).slice(0, 2).join(' · ').slice(0, 80))
+  const [day, setDay] = useState(localDay(new Date()))
   const n = toNum(amt)
   const rr = toNum(rateStr) || rate || 0
   const usdtEq = curr === 'VES' ? (rr ? n / rr : 0) : n
@@ -2355,8 +2388,11 @@ function ReviewForm({ r, rate, cats, onSave, onCancel }: {
         <input placeholder="Nota" value={note} onChange={(e) => setNote(e.target.value)} style={input} />
       </div>
 
+      <DateField value={day} onChange={setDay} />
+
       <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
         <button style={{ ...btn, flex: 1, opacity: n > 0 && rr > 0 ? 1 : 0.5 }} disabled={!(n > 0 && rr > 0)} onClick={() => {
+          const today = localDay(new Date())
           onSave({
             type: kind,
             amountUsd: +usdtEq.toFixed(4),
@@ -2366,8 +2402,9 @@ function ReviewForm({ r, rate, cats, onSave, onCancel }: {
             note,
             source: 'ocr',
             receipt: r.url,
+            ...(day !== today ? { date: isoOnDay(day) } : {}),
           }, rr)
-        }}>Registrar en USDT</button>
+        }}>Registrar en USDT{day !== localDay(new Date()) ? ` · 📅 ${fmtDay(day)}` : ''}</button>
         <button style={{ ...btn, background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)' }} onClick={onCancel}>Descartar</button>
       </div>
     </div>
@@ -2416,6 +2453,7 @@ function QuickAdd({ onAdd, rate, onRate, templates, cats, onSaveTemplate, onDelT
   const [kind, setKind] = useState<'income' | 'expense'>('income')
   const [curr, setCurr] = useState<'USD' | 'VES'>('USD')
   const [rateStr, setRateStr] = useState(String(rate))
+  const [day, setDay] = useState(localDay(new Date()))
   useEffect(() => setRateStr(String(rate)), [rate])
   const n = toNum(amt)
   const rr = toNum(rateStr) || rate || 0
@@ -2474,11 +2512,13 @@ function QuickAdd({ onAdd, rate, onRate, templates, cats, onSaveTemplate, onDelT
         <input placeholder="Nota / descripción" value={note} onChange={(e) => setNote(e.target.value)} style={input} />
         <input placeholder="Persona (opcional)" value={person} onChange={(e) => setPerson(e.target.value)} style={input} />
       </div>
+      <DateField value={day} onChange={setDay} />
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
         <button style={{ ...btn, flex: 1 }} onClick={() => {
           if (!n) return
           if (curr === 'VES' && !rr) return
           if (curr === 'VES' && rr) onRate(rr)
+          const today = localDay(new Date())
           onAdd({
             type: kind,
             amountUsd: curr === 'VES' ? +(n / rr).toFixed(4) : n,
@@ -2487,9 +2527,11 @@ function QuickAdd({ onAdd, rate, onRate, templates, cats, onSaveTemplate, onDelT
             category: effCat(cat, customCat),
             note,
             person: person || undefined,
+            // Si puso una fecha anterior, se registra con ese día; si no, con la fecha y hora actuales
+            ...(day !== today ? { date: isoOnDay(day) } : {}),
           })
-          setAmt(''); setNote(''); setPerson(''); setCustomCat('')
-        }}>Añadir {curr === 'VES' ? 'en Bs → USDT' : 'en USDT'}</button>
+          setAmt(''); setNote(''); setPerson(''); setCustomCat(''); setDay(today)
+        }}>Añadir {curr === 'VES' ? 'en Bs → USDT' : 'en USDT'}{day !== localDay(new Date()) ? ` · 📅 ${fmtDay(day)}` : ''}</button>
         <button
           title="Guardar como plantilla frecuente"
           style={{ ...btn, background: 'transparent', border: '1px solid var(--line)', color: 'var(--gold)', opacity: n > 0 ? 1 : 0.4 }}
@@ -2617,6 +2659,7 @@ function SnapForm({ onSave, rate }: { onSave: (s: Snapshot, rate: number) => voi
   const [bin, setBin] = useState('')
   const [rateStr, setRateStr] = useState(String(rate))
   const [session, setSession] = useState<'open' | 'close'>('open')
+  const [day, setDay] = useState(localDay(new Date()))
   useEffect(() => setRateStr(String(rate)), [rate])
   const r = toNum(rateStr)
   const v = toNum(vesStr)
@@ -2635,11 +2678,98 @@ function SnapForm({ onSave, rate }: { onSave: (s: Snapshot, rate: number) => voi
         </div>
       )}
       <input placeholder="USDT Binance" value={bin} onChange={(e) => setBin(e.target.value)} style={{ ...input, marginTop: 8 }} />
+      <DateField value={day} onChange={setDay} />
       <button style={{ ...btn, marginTop: 10, width: '100%' }} onClick={() => {
         const rr = r || rate || 1
-        onSave({ id: uid(), date: new Date().toISOString(), session, ves: v, vesInUsdt: v / rr, binanceUsdt: toNum(bin), rate: rr }, rr)
-        setVesStr(''); setBin('')
+        const today = localDay(new Date())
+        onSave({
+          id: uid(),
+          date: day === today ? new Date().toISOString() : isoOnDay(day),
+          session,
+          ves: v,
+          vesInUsdt: +(v / rr).toFixed(4),
+          binanceUsdt: toNum(bin),
+          rate: rr,
+        }, rr)
+        setVesStr(''); setBin(''); setDay(today)
       }}>Guardar snapshot</button>
+    </div>
+  )
+}
+
+/** Edición de una apertura/cierre P2P ya registrada (por si te equivocaste en una cifra o en el día) */
+function SnapEditForm({ snap, rate, onSave, onCancel, onDelete }: {
+  snap: Snapshot
+  rate: number
+  onSave: (s: Snapshot, rate: number) => void
+  onCancel: () => void
+  onDelete: () => void
+}) {
+  const [session, setSession] = useState<'open' | 'close'>(snap.session)
+  const [day, setDay] = useState(localDay(snap.date))
+  const [rateStr, setRateStr] = useState(String(snap.rate || rate))
+  const [vesStr, setVesStr] = useState(String(snap.ves))
+  const [bin, setBin] = useState(String(snap.binanceUsdt))
+  const rr = toNum(rateStr)
+  const v = toNum(vesStr)
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+        <button style={chip(session === 'open')} onClick={() => setSession('open')}>Apertura</button>
+        <button style={chip(session === 'close')} onClick={() => setSession('close')}>Cierre</button>
+      </div>
+      <label style={lbl}>Fecha (se conserva la hora original)</label>
+      <input type="date" value={day} max={localDay(new Date())} onChange={(e) => e.target.value && setDay(e.target.value)} style={input} />
+      <label style={{ ...lbl, marginTop: 10 }}>Precio del USDT usado (Bs)</label>
+      <input className="mono" inputMode="decimal" value={rateStr} onChange={(e) => setRateStr(e.target.value)} style={input} />
+      <label style={{ ...lbl, marginTop: 10 }}>Bs en cuentas</label>
+      <input className="mono" inputMode="decimal" value={vesStr} onChange={(e) => setVesStr(e.target.value)} style={input} />
+      {v > 0 && rr > 0 && (
+        <div className="mono" style={{ fontSize: 12, color: 'var(--gold)', marginTop: 6 }}>≈ {money(v / rr)} @{rr}</div>
+      )}
+      <label style={{ ...lbl, marginTop: 10 }}>USDT en Binance</label>
+      <input className="mono" inputMode="decimal" value={bin} onChange={(e) => setBin(e.target.value)} style={input} />
+      <div className="mono" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
+        Total del snapshot: <b style={{ color: 'var(--text)' }}>{money(v / (rr || 1) + toNum(bin))}</b>
+      </div>
+      <button style={{ ...btn, width: '100%', marginTop: 12, opacity: rr > 0 ? 1 : 0.5 }} disabled={!(rr > 0)} onClick={() => {
+        const r2 = rr || rate || 1
+        onSave({ ...snap, session, date: withDay(snap.date, day), ves: v, vesInUsdt: +(v / r2).toFixed(4), binanceUsdt: toNum(bin), rate: r2 }, r2)
+      }}>Guardar cambios</button>
+      <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, lineHeight: 1.5 }}>
+        Al guardar se recalcula la «Ganancia hoy» de ese día (cierre − apertura) y la conciliación P2P.
+      </p>
+      <button style={{ ...btn, width: '100%', marginTop: 8, background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)' }} onClick={onCancel}>Cancelar</button>
+      <button style={{ ...dangerBtn, marginTop: 8 }} onClick={onDelete}>🗑 Eliminar este snapshot</button>
+    </>
+  )
+}
+
+/** Selector de fecha para registrar con una fecha anterior (por si se te olvidó subir el movimiento ese día) */
+function DateField({ value, onChange }: { value: string; onChange: (ymd: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const today = localDay(new Date())
+  const back = value !== today
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button type="button" style={{ ...chip(back), fontSize: 12 }} onClick={() => setOpen((o) => !o)}>
+          📅 {back ? fmtDay(value) : 'Hoy'} {open ? '▲' : '▼'}
+        </button>
+        {back && (
+          <button type="button" style={{ ...chip(false), fontSize: 12, color: 'var(--muted)' }} onClick={() => { onChange(today); setOpen(false) }}>
+            ↩︎ volver a hoy
+          </button>
+        )}
+      </div>
+      {open && (
+        <>
+          <input type="date" value={value} max={today} onChange={(e) => e.target.value && onChange(e.target.value)} style={{ ...input, marginTop: 8 }} />
+          <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+            ¿Se te olvidó registrarlo? Pon la fecha real del movimiento (no puede ser futura).
+          </p>
+        </>
+      )}
     </div>
   )
 }
@@ -2756,6 +2886,10 @@ const stepBtn: React.CSSProperties = {
 }
 const delBtn: React.CSSProperties = {
   background: 'rgba(255,107,138,.08)', color: 'var(--red)', border: '1px solid rgba(255,107,138,.25)',
+  borderRadius: 10, padding: '6px 9px', cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0,
+}
+const editBtn: React.CSSProperties = {
+  background: 'rgba(110,168,255,.08)', color: 'var(--blue)', border: '1px solid rgba(110,168,255,.25)',
   borderRadius: 10, padding: '6px 9px', cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0,
 }
 function chip(on: boolean): React.CSSProperties {

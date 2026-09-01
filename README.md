@@ -16,6 +16,7 @@ npm run dev
 - **Home**: patrimonio, charts con título de mes y semana (1–4), ingresos vs gastos por período.
 - **Movs**: buscador + filtros + micro-movimientos; cada movimiento se puede eliminar.
 - **P2P**: apertura/cierre de saldos VES y Binance; al convertir Bs se pide el precio actual del USDT.
+- **✏️ Editar aperturas y cierres**: cada snapshot de la lista tiene ✏️ (corrige Bs, Binance, tasa, fecha o si fue apertura/cierre) y ✕ (eliminar). Al guardar se **recalcula sola** la «Ganancia hoy» de ese día y la conciliación P2P — si te equivocaste en una cifra, la editas y todo cuadra.
 - **💱 Precio del USDT en la sección P2P**: tarjeta para fijarlo manualmente (aplica a toda la app por defecto) o tomarlo **automáticamente de una celda de tu Google Sheet** (cada 10 min, al abrir la app y con botón 🔄). Cambia el precio en tu hoja durante el día y la app lo adopta sola.
 - **💰 Ganancia hoy**: al registrar el **cierre** del día se crea solo el movimiento «Ganancia hoy» (cierre − apertura, en USDT, categoría P2P); si ya existía se recalcula. Cada cierre muestra su insignia de ganancia en la lista de snapshots.
 - **🧪 Reporte avanzado / P2P**: período propio (Hoy/Semana/Mes/Año/Todo), categorías multi-selección (incluye las personalizadas), tipo, persona, palabra clave y «Solo Ganancia hoy», con **presets** (⚡ Ganancias P2P · 💼 P2P menos trabajadores) y **selección manual por ítem** — exporta solo lo marcado a **PDF/Excel** con Ingresos/Egresos/Neto.
@@ -23,6 +24,7 @@ npm run dev
 - Todo se muestra en **USDT** (con su equivalente en Bs debajo) y cada movimiento/snapshot guarda la tasa (Bs/USDT) del momento.
 - **Escanear facturas en Bs**: el OCR detecta el monto, te pregunta el precio actual del USDT y registra el gasto convertido (USDT + Bs).
 - **Movs y QuickAdd** permiten registrar directamente en Bs o USDT con la tasa del momento; los movimientos se pueden **editar** y eliminar (modales inline).
+- **📅 Fecha anterior**: en QuickAdd, al escanear una factura y al editar un movimiento puedes cambiar la fecha (botón **📅 Hoy** → eliges el día real). Si se te olvida subir algo y lo registras al día siguiente, queda en el día correcto de gráficos, filtros, reportes y presupuestos. No permite fechas futuras.
 - Meta de gasto diario y **presupuestos mensuales por categoría**, ambos con barras de progreso.
 - **Conciliación P2P**: compara tu saldo real (snapshot) contra el esperado (snapshot previo + movimientos) y avisa diferencias.
 - **Plantillas** de movimientos frecuentes (⭐) y **filtro por persona**.
@@ -69,4 +71,5 @@ Los datos se guardan en el navegador (`localStorage`).
 
 ## Changelog rápido
 
+- 2026-09-01: edición y eliminación de aperturas/cierres P2P (con recálculo automático de «Ganancia hoy» y conciliación), fecha anterior al registrar/editar movimientos y al escanear facturas, y agrupación por **día local** (un cierre a las 9pm ya no salta al día siguiente).
 - 2026-08-26: reportes avanzados/P2P, tasa USDT manual o automática (Google Sheets), «Ganancia hoy» automática al cierre, categorías personalizadas con desglose y resumen de búsqueda.

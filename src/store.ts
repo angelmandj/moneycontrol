@@ -1,4 +1,4 @@
-import type { Store } from './types'
+import type { Snapshot, Store, Transaction } from './types'
 
 const KEY = 'moneycontrol.v1'
 
@@ -79,6 +79,70 @@ export function weekOfMonth(d: Date) {
 
 /** Clave de mes para agrupar (ej. "2026-7" = agosto 2026) */
 export const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`
+
+/** Día local (YYYY-MM-DD) de una fecha. Se usa para agrupar apertura/cierre y gráficos:
+ *  con el día UTC (`iso.slice(0,10)`) un cierre a las 9pm caía en el día siguiente. */
+export function localDay(iso: string | Date) {
+  const d = typeof iso === 'string' ? new Date(iso) : iso
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** ISO de un día local (YYYY-MM-DD) a las 12:00 locales: el día coincide en hora local y en UTC,
+ *  así un movimiento con fecha anterior queda en el día correcto en gráficos, filtros y reportes. */
+export function isoOnDay(ymd: string) {
+  const [y, m, d] = ymd.split('-').map(Number)
+  const out = new Date()
+  out.setFullYear(y || out.getFullYear(), (m || out.getMonth() + 1) - 1, d || out.getDate())
+  out.setHours(12, 0, 0, 0)
+  return out.toISOString()
+}
+
+/** Cambia el día de un ISO conservando su hora (para editar la fecha de algo ya registrado) */
+export function withDay(iso: string, ymd: string) {
+  const [y, m, d] = ymd.split('-').map(Number)
+  const out = new Date(iso)
+  if (!y || !m || !d) return iso
+  out.setFullYear(y, m - 1, d)
+  return out.toISOString()
+}
+
+/** YYYY-MM-DD → DD/MM/YYYY (para mostrar la fecha elegida en un botón) */
+export function fmtDay(ymd: string) {
+  const [y, m, d] = (ymd || '').split('-')
+  return y && m && d ? `${d}/${m}/${y}` : ymd
+}
+
+/** Id estable del movimiento automático «Ganancia hoy» de un día */
+export const gainId = (day: string) => `gain-${day}`
+
+/** Ganancia de un día (último cierre − última apertura de ese día local); null si falta alguno */
+export function dayGain(snaps: Snapshot[], day: string) {
+  const desc = (list: Snapshot[]) => [...list].sort((a, b) => +new Date(b.date) - +new Date(a.date))
+  const open = desc(snaps.filter((x) => x.session === 'open' && localDay(x.date) === day))[0]
+  const close = desc(snaps.filter((x) => x.session === 'close' && localDay(x.date) === day))[0]
+  if (!open || !close) return null
+  return { open, close, net: +((close.vesInUsdt + close.binanceUsdt) - (open.vesInUsdt + open.binanceUsdt)).toFixed(4) }
+}
+
+/** Recalcula el movimiento «Ganancia hoy» de un día: lo quita y lo vuelve a crear con los snapshots vigentes.
+ *  Se llama al guardar, editar o eliminar una apertura/cierre, para que el número siempre cuadre. */
+export function syncDayGain(snaps: Snapshot[], txs: Transaction[], day: string, fallbackRate: number): Transaction[] {
+  // Se descarta por id y, por seguridad, también por nota+fecha (respaldos creados con el día en UTC)
+  const rest = txs.filter((t) => t.id !== gainId(day) && !(t.note === 'Ganancia hoy' && localDay(t.date) === day))
+  const g = dayGain(snaps, day)
+  if (!g || Math.abs(g.net) < 0.0001) return rest
+  return [{
+    id: gainId(day),
+    type: g.net >= 0 ? 'income' : 'expense',
+    amountUsd: Math.abs(g.net),
+    category: 'P2P',
+    note: 'Ganancia hoy',
+    date: g.close.date,
+    source: 'p2p',
+    rateVes: g.close.rate || fallbackRate,
+  }, ...rest]
+}
 
 /** Parsea montos escritos como 1200.50, 1200,50, 1.200,50 o 1,200.50 */
 export function toNum(s: string) {
