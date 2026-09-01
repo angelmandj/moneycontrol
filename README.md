@@ -33,6 +33,7 @@ npm run dev
 - **Buscador inteligente**: al escribir una palabra clave ves cuántas coincidencias hay en las descripciones y sus totales (ingresos/gastos/neto) sobre el listado filtrado.
 - Tendencia del neto **vs. mes anterior** (▲/▼ %) y recordatorio de cierre P2P.
 - **Respaldo JSON** (exportar/restaurar), **bloqueo con PIN** y **tema claro/oscuro** (sección Más).
+- **👁️ Modo privado**: el ícono de ojo junto a «Patrimonio operativo» tapa el total, los mini‑resúmenes (Ingresos/Gastos/Neto), «Te deben», «Debes», «Patrimonio neto», el gasto de hoy y el total de pagos pendientes. Se recuerda entre sesiones y sincroniza con la nube; tócalo de nuevo para mostrar todo.
 - **Desbloqueo con huella/rostro 👆** (WebAuthn): en *Más → Seguridad*, con PIN activo, activa la biometría del dispositivo (se guarda solo en ese dispositivo; el PIN queda de respaldo). Al abrir la app la pide automáticamente.
 - La nube **sincroniza en silencio al recargar** si nube y dispositivo coinciden (el modal "nube vs dispositivo" solo aparece cuando hay diferencias reales).
 - **Gastos fijos del mes** (celular, internet, alquiler, tarjeta…): con día de vencimiento y **alertas programables** (avisa X días antes; banner persistente en Home + notificación del navegador **hasta marcar pagado**). "Pagar" registra el gasto automáticamente y "des-marcar" lo revierte.
@@ -71,5 +72,5 @@ Los datos se guardan en el navegador (`localStorage`).
 
 ## Changelog rápido
 
-- 2026-09-01: edición y eliminación de aperturas/cierres P2P (con recálculo automático de «Ganancia hoy» y conciliación), fecha anterior al registrar/editar movimientos y al escanear facturas, y agrupación por **día local** (un cierre a las 9pm ya no salta al día siguiente).
+- 2026-09-01: edición y eliminación de aperturas/cierres P2P (con recálculo automático de «Ganancia hoy» y conciliación), fecha anterior al registrar/editar movimientos y al escanear facturas, agrupación por **día local** (un cierre a las 9pm ya no salta al día siguiente) y **modo privado 👁️** para ocultar el monto total del Home.
 - 2026-08-26: reportes avanzados/P2P, tasa USDT manual o automática (Google Sheets), «Ganancia hoy» automática al cierre, categorías personalizadas con desglose y resumen de búsqueda.

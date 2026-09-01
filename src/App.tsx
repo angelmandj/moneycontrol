@@ -35,6 +35,8 @@ const DAYL = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
 function money(n: number) {
   return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`
 }
+/** Texto que reemplaza a los montos cuando el modo privado (ícono de ojo) está activo */
+const MASK = '••••••'
 /** Equivalente en bolívares, como dato secundario */
 function ves(n: number) {
   return `${n.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs`
@@ -292,6 +294,9 @@ export default function App() {
   const exp = txs.filter((t) => t.type === 'expense').reduce((a, t) => a + t.amountUsd, 0)
   const loansOpen = s.loans.filter((l) => l.status === 'open').reduce((a, l) => a + l.amountUsd, 0)
   const debtsOpen = s.debts.filter((d) => d.status === 'open').reduce((a, d) => a + d.amountUsd, 0)
+  // Modo privado: el ícono de ojo del Home tapa los montos totales
+  const hideAmt = !!s.hideAmounts
+  const mask = (txt: string) => (hideAmt ? MASK : txt)
   const todayExp = s.txs.filter((t) => t.type === 'expense' && inPeriod(t.date, 'day')).reduce((a, t) => a + t.amountUsd, 0)
   // Gastos fijos con alerta activa hoy (siguen recordando hasta marcar pagado)
   const billsDue = s.recurring.filter((b) => billState(b, now).alert)
@@ -637,6 +642,12 @@ export default function App() {
     })
   }
 
+  /** Alterna el modo privado (ícono de ojo): tapa los montos del Home sin borrar nada */
+  function toggleAmounts() {
+    setS((p) => ({ ...p, hideAmounts: !p.hideAmounts }))
+    ping(hideAmt ? 'Montos visibles' : 'Montos ocultos')
+  }
+
   function startFromZero() {
     setConfirm({
       title: 'Empezar desde cero',
@@ -916,7 +927,7 @@ export default function App() {
             <button onClick={() => setTab('bills')} style={{ ...card, width: '100%', textAlign: 'left', cursor: 'pointer', color: 'var(--text)', display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, borderColor: 'rgba(255,107,138,.4)', background: 'rgba(255,107,138,.08)' }}>
               <span style={{ fontSize: 18 }}>🔔</span>
               <span style={{ flex: 1, fontSize: 13 }}>
-                <b>{billsDue.length} pago{billsDue.length > 1 ? 's' : ''} fijo{billsDue.length > 1 ? 's' : ''} pendiente{billsDue.length > 1 ? 's' : ''}</b> · {money(billsDueTotal)}
+                <b>{billsDue.length} pago{billsDue.length > 1 ? 's' : ''} fijo{billsDue.length > 1 ? 's' : ''} pendiente{billsDue.length > 1 ? 's' : ''}</b> · {mask(money(billsDueTotal))}
                 <br />
                 <span style={{ color: 'var(--muted)', fontSize: 12 }}>{billsDue.map((b) => b.name).join(' · ')}</span>
               </span>
@@ -933,27 +944,30 @@ export default function App() {
           )}
 
           <div style={hero}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <div style={{ opacity: 0.7, fontSize: 13 }}>Patrimonio operativo</div>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>{scopeLbl}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{scopeLbl}</div>
+                <EyeBtn shown={!hideAmt} onClick={toggleAmounts} />
+              </div>
             </div>
-            <div className="mono" style={{ fontSize: 36, fontWeight: 700, margin: '4px 0 4px', letterSpacing: -0.5 }}>{money(cash)}</div>
+            <div className="mono" style={{ fontSize: 36, fontWeight: 700, margin: '4px 0 4px', letterSpacing: -0.5 }}>{mask(money(cash))}</div>
             {trendPct !== null && (
               <div style={{ fontSize: 12, color: trendPct >= 0 ? 'var(--green)' : 'var(--red)', marginBottom: 10 }}>
                 {trendPct >= 0 ? '▲' : '▼'} {Math.abs(trendPct).toFixed(1)}% neto vs. {MESES[prevD.getMonth()]}
               </div>
             )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: trendPct !== null ? 0 : 10 }}>
-              <Mini label="Ingresos" value={money(inc)} color="var(--green)" />
-              <Mini label="Gastos" value={money(exp)} color="var(--red)" />
-              <Mini label="Neto" value={money(inc - exp)} color="var(--blue)" />
+              <Mini label="Ingresos" value={mask(money(inc))} color="var(--green)" />
+              <Mini label="Gastos" value={mask(money(exp))} color="var(--red)" />
+              <Mini label="Neto" value={mask(money(inc - exp))} color="var(--blue)" />
             </div>
 
             <div style={{ marginTop: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
                 <span>Gasto de hoy</span>
                 <span className="mono">
-                  {money(todayExp)}{s.dailyGoal > 0 ? ` / ${money(s.dailyGoal)}` : ''}
+                  {mask(`${money(todayExp)}${s.dailyGoal > 0 ? ` / ${money(s.dailyGoal)}` : ''}`)}
                   <button
                     title="Fijar meta diaria"
                     style={{ background: 'none', border: 0, color: 'var(--muted)', cursor: 'pointer', marginLeft: 4, fontSize: 12 }}
@@ -971,15 +985,15 @@ export default function App() {
             <div style={{ marginTop: 12, display: 'grid', gap: 5, fontSize: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted)' }}>
                 <span>🤝 Te deben</span>
-                <b className="mono" style={{ color: 'var(--gold)' }}>+{money(loansOpen)}</b>
+                <b className="mono" style={{ color: 'var(--gold)' }}>+{mask(money(loansOpen))}</b>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted)' }}>
                 <span>💳 Debes</span>
-                <b className="mono" style={{ color: 'var(--red)' }}>-{money(debtsOpen)}</b>
+                <b className="mono" style={{ color: 'var(--red)' }}>-{mask(money(debtsOpen))}</b>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--line)', paddingTop: 7, marginTop: 3 }}>
                 <span style={{ color: 'var(--muted)' }}>Patrimonio neto</span>
-                <b className="mono" style={{ color: netWorth >= 0 ? 'var(--green)' : 'var(--red)' }}>{money(netWorth)}</b>
+                <b className="mono" style={{ color: netWorth >= 0 ? 'var(--green)' : 'var(--red)' }}>{mask(money(netWorth))}</b>
               </div>
             </div>
           </div>
@@ -2411,6 +2425,36 @@ function ReviewForm({ r, rate, cats, onSave, onCancel }: {
   )
 }
 
+/** Ícono de ojo: oculta o muestra los montos del Home (modo privado) */
+function EyeBtn({ shown, onClick }: { shown: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={shown ? 'Ocultar montos' : 'Mostrar montos'}
+      aria-pressed={!shown}
+      title={shown ? 'Ocultar montos' : 'Mostrar montos'}
+      style={{ ...eyeBtn, color: shown ? 'var(--muted)' : 'var(--blue)' }}
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {shown ? (
+          <>
+            <path d="M1.8 12S5.5 5.6 12 5.6 22.2 12 22.2 12 18.5 18.4 12 18.4 1.8 12 1.8 12Z" />
+            <circle cx="12" cy="12" r="3" />
+          </>
+        ) : (
+          <>
+            <path d="M3 3l18 18" />
+            <path d="M10.6 6.1A9.9 9.9 0 0 1 12 6c6.5 0 10.2 6 10.2 6a17.6 17.6 0 0 1-3.4 4" />
+            <path d="M6.4 8A17.4 17.4 0 0 0 1.8 12S5.5 18.4 12 18.4a9.6 9.6 0 0 0 4.1-.9" />
+            <path d="M9.9 10.1a3 3 0 0 0 4.1 4.2" />
+          </>
+        )}
+      </svg>
+    </button>
+  )
+}
+
 function Mini({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div style={{ background: 'var(--well)', borderRadius: 14, padding: 10 }}>
@@ -2891,6 +2935,10 @@ const delBtn: React.CSSProperties = {
 const editBtn: React.CSSProperties = {
   background: 'rgba(110,168,255,.08)', color: 'var(--blue)', border: '1px solid rgba(110,168,255,.25)',
   borderRadius: 10, padding: '6px 9px', cursor: 'pointer', fontSize: 12, lineHeight: 1, flexShrink: 0,
+}
+const eyeBtn: React.CSSProperties = {
+  width: 32, height: 32, padding: 0, borderRadius: 999, border: '1px solid var(--line)', background: 'var(--chip)',
+  display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0,
 }
 function chip(on: boolean): React.CSSProperties {
   return {

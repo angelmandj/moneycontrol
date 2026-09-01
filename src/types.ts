@@ -104,4 +104,6 @@ export interface Store {
   pinHash?: string
   /** Ya usó "empezar desde cero": oculta el botón del Home para evitar borrados accidentales */
   didReset?: boolean
+  /** Modo privado: oculta los montos del Home detrás del ícono de ojo */
+  hideAmounts?: boolean
 }
