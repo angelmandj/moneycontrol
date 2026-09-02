@@ -23,12 +23,6 @@
       "short_name": "Registrar",
       "url": "./?go=registrar",
       "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
-    },
-    {
-      "name": "Escanear factura",
-      "short_name": "Escanear",
-      "url": "./?go=escanear",
-      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
