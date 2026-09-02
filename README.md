@@ -22,9 +22,8 @@ npm run dev
 - **🧪 Reporte avanzado / P2P**: período propio (Hoy/Semana/Mes/Año/Todo), categorías multi-selección (incluye las personalizadas), tipo, persona, palabra clave y «Solo Ganancia hoy», con **presets** (⚡ Ganancias P2P · 💼 P2P menos trabajadores) y **selección manual por ítem** — exporta solo lo marcado a **PDF/Excel** con Ingresos/Egresos/Neto.
 - **Préstamos y deudas**: quién te debe (cobros) y **cuánto debes tú** (deudas con nombre y monto; al marcar "Pagada" se registra el gasto). La conciliación general del Home muestra efectivo + te deben − debes = **patrimonio neto**.
 - Todo se muestra en **USDT** (con su equivalente en Bs debajo) y cada movimiento/snapshot guarda la tasa (Bs/USDT) del momento.
-- **Escanear facturas en Bs**: el OCR detecta el monto, te pregunta el precio actual del USDT y registra el gasto convertido (USDT + Bs).
 - **Movs y QuickAdd** permiten registrar directamente en Bs o USDT con la tasa del momento; los movimientos se pueden **editar** y eliminar (modales inline).
-- **📅 Fecha anterior**: en QuickAdd, al escanear una factura y al editar un movimiento puedes cambiar la fecha (botón **📅 Hoy** → eliges el día real). Si se te olvida subir algo y lo registras al día siguiente, queda en el día correcto de gráficos, filtros, reportes y presupuestos. No permite fechas futuras.
+- **📅 Fecha anterior**: en QuickAdd y al editar un movimiento puedes cambiar la fecha (botón **📅 Hoy** → eliges el día real). Si se te olvida subir algo y lo registras al día siguiente, queda en el día correcto de gráficos, filtros, reportes y presupuestos. No permite fechas futuras.
 - Meta de gasto diario y **presupuestos mensuales por categoría**, ambos con barras de progreso.
 - **Conciliación P2P**: compara tu saldo real (snapshot) contra el esperado (snapshot previo + movimientos) y avisa diferencias.
 - **Plantillas** de movimientos frecuentes (⭐) y **filtro por persona**.
@@ -43,7 +42,7 @@ npm run dev
 
 ## Instalarla como app (PWA)
 
-El build de producción es una **PWA instalable**: ícono propio, pantalla completa, funciona sin conexión (service worker con caché local) y atajos desde el ícono (Registrar / Escanear).
+El build de producción es una **PWA instalable**: ícono propio, pantalla completa, funciona sin conexión (service worker con caché local) y atajo desde el ícono (Registrar).
 
 1. Genera y sirve el build de producción (el service worker **no** corre en `npm run dev`):
    ```bash
@@ -64,7 +63,6 @@ El build de producción es una **PWA instalable**: ícono propio, pantalla compl
 4. En la app: **Más → Nube**, escribe tu correo y abre el enlace que te llega.
 
 > El SMTP por defecto de Supabase limita los correos (pocos por hora en proyectos nuevos). Si deja de llegar el enlace, configura un SMTP propio en **Authentication → SMTP**, o espera una hora.
-- **Scan**: OCR de facturas y capturas (Tesseract).
 - **TG**: pega el token de un bot de Telegram y sincroniza mensajes del tipo  
   `apertura ves:18500 usdt:194 binance:320` o `gasto 3.40 almuerzo`.
 
@@ -72,5 +70,5 @@ Los datos se guardan en el navegador (`localStorage`).
 
 ## Changelog rápido
 
-- 2026-09-01: edición y eliminación de aperturas/cierres P2P (con recálculo automático de «Ganancia hoy» y conciliación), fecha anterior al registrar/editar movimientos y al escanear facturas, agrupación por **día local** (un cierre a las 9pm ya no salta al día siguiente) y **modo privado 👁️** para ocultar el monto total del Home.
+- 2026-09-01: se **eliminó el escaneo de facturas/capturas (OCR)** por no funcionar — desaparecen la pestaña Scan, el acceso rápido, el atajo PWA y la dependencia `tesseract.js` (Telegram conserva su parser propio). También: edición y eliminación de aperturas/cierres P2P (con recálculo de «Ganancia hoy» y conciliación), fecha anterior al registrar/editar movimientos, agrupación por **día local** (un cierre a las 9pm ya no salta al día siguiente) y **modo privado 👁️** para ocultar el monto total del Home.
 - 2026-08-26: reportes avanzados/P2P, tasa USDT manual o automática (Google Sheets), «Ganancia hoy» automática al cierre, categorías personalizadas con desglose y resumen de búsqueda.

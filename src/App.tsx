@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { loadStore, saveStore, uid, inPeriod, weekOfMonth, resetData, toNum, monthKey, hashPin, coerceStore, localDay, isoOnDay, withDay, fmtDay, dayGain, syncDayGain } from './store'
-import { parseTelegramCaption, readReceipt } from './ocr'
+import { parseTelegramCaption } from './telegram'
 import { exportPdf, exportXlsx } from './report'
 import { sheetCellCsvUrl, fetchSheetRate } from './sheetRate'
 import { loadBio, clearBio, bioSupported, bioRegister, bioVerify } from './bio'
@@ -42,7 +42,7 @@ function ves(n: number) {
   return `${n.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs`
 }
 
-type Tab = 'home' | 'tx' | 'p2p' | 'scan' | 'mas' | 'loans' | 'bills' | 'rep' | 'tg'
+type Tab = 'home' | 'tx' | 'p2p' | 'mas' | 'loans' | 'bills' | 'rep' | 'tg'
 
 /** Estado de un gasto fijo para el mes en curso (alertas hasta marcar pagado) */
 function billState(b: Recurring, now: Date) {
@@ -54,14 +54,6 @@ function billState(b: Recurring, now: Date) {
   const state: 'paid' | 'overdue' | 'due' | 'upcoming' = paidTx ? 'paid' : diff < 0 ? 'overdue' : diff === 0 ? 'due' : 'upcoming'
   const alert = !paidTx && b.remind && diff <= (b.remindDaysBefore ?? 0)
   return { state, diff, paidTx, alert }
-}
-
-interface Review {
-  url: string
-  text: string
-  amount: number
-  category: string
-  isIncome: boolean
 }
 
 interface Confirm {
@@ -89,7 +81,6 @@ export default function App() {
   const [personF, setPersonF] = useState('')
   const [busy, setBusy] = useState('')
   const [exporting, setExporting] = useState<'' | 'pdf' | 'xlsx'>('')
-  const [review, setReview] = useState<Review | null>(null)
   const [editTx, setEditTx] = useState<Transaction | null>(null)
   const [editSnap, setEditSnap] = useState<Snapshot | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
@@ -120,7 +111,6 @@ export default function App() {
   const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null)
   const [installed, setInstalled] = useState(false)
   const [installHelp, setInstallHelp] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const sRef = useRef(s)
 
@@ -163,11 +153,10 @@ export default function App() {
     }
   }, [])
 
-  // PWA: atajos desde el ícono instalado (/?go=escanear | /?go=registrar)
+  // PWA: atajo desde el ícono instalado (/?go=registrar)
   useEffect(() => {
     const go = new URLSearchParams(window.location.search).get('go')
-    if (go === 'escanear') setTab('scan')
-    else if (go === 'registrar') setTab('home')
+    if (go === 'registrar') setTab('home')
   }, [])
 
   // Biometría: detectar si el dispositivo tiene huella/rostro disponible
@@ -776,38 +765,6 @@ export default function App() {
     }
   }
 
-  async function onScan(file: File, kind: 'tx' | 'p2p') {
-    setBusy('Leyendo captura con OCR…')
-    try {
-      const r = await readReceipt(file)
-      const url = URL.createObjectURL(file)
-      if (kind === 'p2p') {
-        const cap = parseTelegramCaption(r.text)
-        const v = cap.ves || r.amount
-        const snap: Snapshot = {
-          id: uid(),
-          date: new Date().toISOString(),
-          session: cap.session as 'open' | 'close',
-          ves: v,
-          vesInUsdt: cap.vesInUsdt || v / (s.rate || 1),
-          binanceUsdt: cap.binanceUsdt || 0,
-          rate: s.rate,
-          receipt: url,
-          note: r.text.slice(0, 180),
-        }
-        setS((p) => ({ ...p, snaps: [snap, ...p.snaps] }))
-        ping('Snapshot P2P creado')
-      } else {
-        // Factura: abrir confirmación con conversión Bs → USDT
-        setReview({ url, text: r.text, amount: r.amount, category: r.category, isIncome: r.isIncome })
-      }
-    } catch {
-      ping('No se pudo leer la imagen')
-    } finally {
-      setBusy('')
-    }
-  }
-
   async function pollTelegram() {
     if (!s.telegram.token) return ping('Pega el token del bot')
     setBusy('Sincronizando Telegram…')
@@ -860,7 +817,6 @@ export default function App() {
 
   const acts = [
     { icon: '＋', label: 'Registrar', go: 'tx' as Tab, color: 'var(--blue)' },
-    { icon: '📷', label: 'Escanear', go: 'scan' as Tab, color: 'var(--violet)' },
     { icon: '💱', label: 'Snapshot', go: 'p2p' as Tab, color: 'var(--gold)' },
     { icon: '📄', label: 'Reporte', go: 'rep' as Tab, color: 'var(--green)' },
   ]
@@ -868,7 +824,6 @@ export default function App() {
   const navItems = [
     { k: 'home' as Tab, icon: '🏠', l: 'Home' },
     { k: 'tx' as Tab, icon: '📋', l: 'Movs' },
-    { k: 'scan' as Tab, icon: '📷', l: 'Scan' },
     { k: 'p2p' as Tab, icon: '💱', l: 'P2P' },
     { k: 'mas' as Tab, icon: '☰', l: 'Más' },
   ]
@@ -1302,40 +1257,6 @@ export default function App() {
             )
           })}
         </>
-      )}
-
-      {tab === 'scan' && (
-        review ? (
-          <ReviewForm
-            r={review}
-            cats={allCats}
-            rate={s.rate}
-            onCancel={() => setReview(null)}
-            onSave={(partial, newRate) => {
-              if (newRate && newRate !== s.rate) setS((p) => ({ ...p, rate: newRate }))
-              addTx(partial)
-              setReview(null)
-            }}
-          />
-        ) : (
-          <div style={{ ...hero, textAlign: 'center' }}>
-            <h2>Escanear factura o captura</h2>
-            <p style={{ color: 'var(--muted)', margin: '10px 0 18px', fontSize: 14 }}>
-              Toma foto a un recibo o captura. El OCR detecta el monto; si está en <b>Bs</b> te preguntamos el precio actual del USDT y lo convertimos automáticamente.
-            </p>
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => {
-              const f = e.target.files?.[0]
-              if (f) onScan(f, 'tx')
-              e.target.value = ''
-            }} />
-            <button style={btn} onClick={() => fileRef.current?.click()}>📷 Foto de factura (Bs o USDT)</button>
-            <label style={{ display: 'block', marginTop: 12 }}>
-              <span style={{ ...btn, display: 'inline-block', background: 'transparent', border: '1px solid var(--line)', color: 'var(--text)' }}>Captura P2P / saldos</span>
-              <input type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onScan(f, 'p2p'); e.target.value = '' }} />
-            </label>
-            {busy && <p style={{ marginTop: 16, color: 'var(--gold)' }}>{busy}</p>}
-          </div>
-        )
       )}
 
       {tab === 'mas' && (
@@ -2023,21 +1944,10 @@ export default function App() {
 
       <nav style={nav}>
         {navItems.map(({ k, icon, l }) => (
-          k === 'scan' ? (
-            <button key={k} onClick={() => setTab(k)} style={{ background: 'none', border: 0, cursor: 'pointer', transform: 'translateY(-14px)' }}>
-              <div style={{
-                width: 54, height: 54, borderRadius: '50%', display: 'grid', placeItems: 'center', fontSize: 22,
-                background: 'linear-gradient(135deg,#6ea8ff,#a78bfa)',
-                boxShadow: tab === 'scan' ? '0 10px 26px -6px rgba(110,168,255,.8)' : '0 8px 20px -8px rgba(110,168,255,.5)',
-                border: '4px solid var(--bg)',
-              }}>{icon}</div>
-            </button>
-          ) : (
-            <button key={k} onClick={() => setTab(k)} style={{ background: 'none', border: 0, cursor: 'pointer', color: navActive(k) ? 'var(--text)' : 'var(--muted)' }}>
-              <div style={{ fontSize: 20, opacity: navActive(k) ? 1 : 0.6 }}>{icon}</div>
-              <div style={{ fontWeight: 600, fontSize: 10, marginTop: 2 }}>{l}</div>
-            </button>
-          )
+          <button key={k} onClick={() => setTab(k)} style={{ background: 'none', border: 0, cursor: 'pointer', color: navActive(k) ? 'var(--text)' : 'var(--muted)' }}>
+            <div style={{ fontSize: 20, opacity: navActive(k) ? 1 : 0.6 }}>{icon}</div>
+            <div style={{ fontWeight: 600, fontSize: 10, marginTop: 2 }}>{l}</div>
+          </button>
         ))}
       </nav>
       {toast && <div style={toastSt}>{toast}</div>}
@@ -2336,90 +2246,6 @@ function LockScreen({ pinHash, hasBio, onOk, onBio }: { pinHash: string; hasBio:
             {bioBusy ? '⏳ Verificando…' : '👆 Usar huella / rostro'}
           </button>
         )}
-      </div>
-    </div>
-  )
-}
-
-/** Confirmación de factura escaneada: convierte Bs → USDT preguntando el precio actual */
-function ReviewForm({ r, rate, cats, onSave, onCancel }: {
-  r: Review
-  rate: number
-  cats: string[]
-  onSave: (t: Partial<Transaction> & { type: Transaction['type']; amountUsd: number }, rate: number) => void
-  onCancel: () => void
-}) {
-  const guessVes = r.amount > 500
-  const [amt, setAmt] = useState(String(r.amount))
-  const [curr, setCurr] = useState<'VES' | 'USD'>(guessVes ? 'VES' : 'USD')
-  const [rateStr, setRateStr] = useState(String(rate))
-  const [cat, setCat] = useState(cats.includes(r.category) ? r.category : 'Otros')
-  const [customCat, setCustomCat] = useState(cats.includes(r.category) ? '' : (r.category && r.category !== 'Otros' ? r.category : ''))
-  const [kind, setKind] = useState<'income' | 'expense'>(r.isIncome ? 'income' : 'expense')
-  const [note, setNote] = useState(r.text.split('\n').filter(Boolean).slice(0, 2).join(' · ').slice(0, 80))
-  const [day, setDay] = useState(localDay(new Date()))
-  const n = toNum(amt)
-  const rr = toNum(rateStr) || rate || 0
-  const usdtEq = curr === 'VES' ? (rr ? n / rr : 0) : n
-  const vesEq = curr === 'VES' ? n : n * rr
-
-  return (
-    <div style={hero}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <h2 style={{ fontSize: 17 }}>Confirmar factura</h2>
-        <button onClick={onCancel} style={{ background: 'none', border: 0, color: 'var(--muted)', cursor: 'pointer', fontSize: 16 }}>✕</button>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-        <button style={chip(kind === 'expense')} onClick={() => setKind('expense')}>Gasto</button>
-        <button style={chip(kind === 'income')} onClick={() => setKind('income')}>Ingreso</button>
-        <div style={{ flex: 1 }} />
-        <button style={chip(curr === 'VES')} onClick={() => setCurr('VES')}>Bs</button>
-        <button style={chip(curr === 'USD')} onClick={() => setCurr('USD')}>USDT</button>
-      </div>
-
-      <label style={lbl}>Monto detectado ({curr === 'VES' ? 'Bs' : 'USDT'}) — editable</label>
-      <input className="mono" inputMode="decimal" value={amt} onChange={(e) => setAmt(e.target.value)} style={input} />
-
-      <label style={{ ...lbl, marginTop: 10 }}>Precio actual del USDT (Bs)</label>
-      <input className="mono" inputMode="decimal" placeholder="Ej: 220.50" value={rateStr} onChange={(e) => setRateStr(e.target.value)} style={input} />
-
-      {n > 0 && rr > 0 && (
-        <div style={{ marginTop: 12, background: 'var(--well)', borderRadius: 14, padding: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-            <span style={{ color: 'var(--muted)' }}>Se registrará</span>
-            <b className="mono" style={{ color: kind === 'income' ? 'var(--green)' : 'var(--red)' }}>{money(usdtEq)}</b>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
-            <span style={{ color: 'var(--muted)' }}>Equivalente</span>
-            <span className="mono" style={{ color: 'var(--gold)' }}>{ves(vesEq)} @{rr}</span>
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-        <CatSelect cats={cats} value={cat} custom={customCat} onValue={setCat} onCustom={setCustomCat} />
-        <input placeholder="Nota" value={note} onChange={(e) => setNote(e.target.value)} style={input} />
-      </div>
-
-      <DateField value={day} onChange={setDay} />
-
-      <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-        <button style={{ ...btn, flex: 1, opacity: n > 0 && rr > 0 ? 1 : 0.5 }} disabled={!(n > 0 && rr > 0)} onClick={() => {
-          const today = localDay(new Date())
-          onSave({
-            type: kind,
-            amountUsd: +usdtEq.toFixed(4),
-            amountVes: +vesEq.toFixed(2),
-            rateVes: rr,
-            category: effCat(cat, customCat),
-            note,
-            source: 'ocr',
-            receipt: r.url,
-            ...(day !== today ? { date: isoOnDay(day) } : {}),
-          }, rr)
-        }}>Registrar en USDT{day !== localDay(new Date()) ? ` · 📅 ${fmtDay(day)}` : ''}</button>
-        <button style={{ ...btn, background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)' }} onClick={onCancel}>Descartar</button>
       </div>
     </div>
   )
